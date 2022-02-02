@@ -1,7 +1,5 @@
 //run: cargo test -- --nocapture
 
-use std::fmt;
-
 
 #[derive(Debug)]
 pub enum Source {
@@ -51,8 +49,7 @@ impl<T> Token<T> {
                 } else {
                     (close, start)
                 };
-                let offset = original.as_ptr() as usize;
-                println!("get_context debug {:?}", &original[start..close]);
+                //let offset = original.as_ptr() as usize;
 
                 // @TODO: support multiline ranges
                 // @TODO: unicode width support
@@ -141,7 +138,7 @@ impl<T: std::fmt::Debug> Token<T> {
     pub fn debug_print(&self, original: &str) {
         print!("  * {:?}", self.me);
         match self.source {
-            Source::Range(start, close) => print!(" {:?}\n", &original[start..close]),
+            Source::Range(start, close) => println!(" {:?}", &original[start..close]),
         }
     }
 }
