@@ -22,9 +22,12 @@ pub enum LexType {
     QuoteStart,
     QuoteClose,
     Quoted,
+    QuoteEscaped(char),
+    QuoteBlank,
     //Finish,
 }
 
+#[derive(Debug)]
 enum CellMode {
     // Placeholder for Mode
     Transition,
@@ -66,6 +69,7 @@ pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError>
     //println!("{:?}", original);
     //println!("{:?}", lexemes.len());
 
+    debug_assert_eq!(original, reconstruct_string(original, &lexemes));
     Ok(lexemes)
 }
 
@@ -340,13 +344,55 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer: &str) -> (PullP
         (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
         (CodeMode::Regular, ')') => (LexType::ParenClose, len_utf8!('|' => 1), false),
         (CodeMode::Regular, '.') => (LexType::Stdin, len_utf8!('.' => 1), false),
+        (CodeMode::Regular, '"') => {
+            fsm.mode = CodeMode::Quote;
+            (LexType::QuoteStart, len_utf8!('"' => 1), false)
+        }
 
         // Quotation stuff
         (CodeMode::Quote, '"') => {
             fsm.mode = CodeMode::Regular;
             (LexType::QuoteClose, 1, false)
         }
-        (CodeMode::Quote, _) => (LexType::Quoted, len_utf8!('"' => 1), false),
+        (CodeMode::Quote, '\\') => {
+            // `skip(1)` because we `advance(AHEAD)`. Effectively, we `skip(2)`
+            if let Some((ch, _, _)) = walker.advance(AHEAD) {
+                match ch {
+                    'n' => (LexType::QuoteEscaped('\n'), 1, false),
+                    't' => (LexType::QuoteEscaped('\t'), 1, false),
+                    ' ' | '\n' => (LexType::QuoteBlank, 1, false),
+                    _ => {
+                        let source = Source::Range(curr, post);
+                        let token = Token::new("Missing closing quotation mark", source);
+                        return (Err(token), false);
+                    }
+                }
+            } else {
+                let source = Source::Range(curr, walker.original.len());
+                let token = Token::new("Missing closing quotation mark", source);
+                return (Err(token), false);
+            }
+        }
+        (CodeMode::Quote, _) => {
+            let mut do_while = STILL;
+            while let Some((ch, _, _)) = walker.advance(do_while) {
+                if ch == '"' || ch == '\\' {
+                    break;
+                }
+                do_while = AHEAD;
+            }
+
+            if walker.is_end() {
+                let source = Source::Range(curr, post);
+                let token = Token::new("Missing closing quotation mark", source);
+                return (Err(token), false);
+            }
+
+            // `skip(0)` because we already advanced {walker}
+            debug_assert!(walker.ch == '"' || walker.ch == '\\');
+            (LexType::Quoted, 0, false)
+        }
+
         //(CodeMode::Quote, '\"') => {
         //    walker.advance(AHEAD);
         //    LexType::QuoteStart
