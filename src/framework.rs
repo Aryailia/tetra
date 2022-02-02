@@ -8,7 +8,7 @@ pub enum Source {
 
 #[derive(Debug)]
 pub struct Token<T> {
-    source: Source,
+    pub source: Source,
     pub me: T,
 }
 

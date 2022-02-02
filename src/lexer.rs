@@ -3,6 +3,27 @@
 use crate::framework::{Source, Token};
 use std::mem::take;
 
+type ParseError = Token<&'static str>;
+type PullParseOutput = Result<Option<Lexeme>, ParseError>;
+type Lexeme = Token<LexType>;
+
+pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError> {
+    let mut lexemes = Vec::with_capacity(original.len());
+
+    let mut fsm = CellFsm::new();
+    let mut walker = Walker::new(original);
+
+    while let Some(token1) = parse(&mut fsm, &mut walker)? {
+        lexemes.push(token1);
+    }
+    debug_assert_eq!(original, reconstruct_string(original, &lexemes));
+    Ok(lexemes)
+}
+
+
+/******************************************************************************
+ * Cell-level FSM
+ ******************************************************************************/
 #[derive(Debug)]
 pub enum LexType {
     // Cell-level stuff
@@ -37,42 +58,6 @@ enum CellMode {
     Comment, // Comment block
     Finish,  // Zero-span syntax, just indicates parsing is complete
 }
-
-type ParseError = Token<&'static str>;
-type PullParseOutput = Result<Option<Lexeme>, ParseError>;
-type Lexeme = Token<LexType>;
-
-//
-pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError> {
-    let mut lexemes = Vec::with_capacity(original.len());
-
-    let mut fsm = CellFsm::new();
-    let mut walker = Walker::new(original);
-
-    //println!("{:?}", original);
-    //println!("{:?}", walker.advance(true).unwrap().0);
-    //println!("{:?}", walker.advance(false).unwrap().0);
-    //walker.skip(2);
-    //println!("{:?}", walker.advance(true).unwrap().0);
-    //println!("{:?}", walker.advance(false).unwrap().0);
-    //println!("{:?}", walker.advance(false).unwrap().0);
-    //println!("{:?}", walker.advance(false));
-
-    while let Some(token1) = parse(&mut fsm, &mut walker)? {
-        lexemes.push(token1);
-        //maybe_token2.map(|t| lexemes.push(t));
-    }
-    //lexemes.push(Token::new(LexType::Text, Source::Range(0, 0)));
-    for l in &lexemes {
-        l.debug_print(original);
-    }
-    //println!("{:?}", original);
-    //println!("{:?}", lexemes.len());
-
-    debug_assert_eq!(original, reconstruct_string(original, &lexemes));
-    Ok(lexemes)
-}
-
 struct CellFsm {
     mode: CellMode,
     transition_to: Option<(CellMode, Token<LexType>)>,
@@ -281,7 +266,7 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
 }
 
 /******************************************************************************
- * 'PullParser' impl for 'StatementFsm'
+ * Code-cell-level FSM
  ******************************************************************************/
 // This
 struct CodeFsm {
@@ -409,6 +394,108 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer: &str) -> (PullP
     (Ok(Some(token)), finished)
 }
 
+/******************************************************************************
+ * Functions for use in testing
+ ******************************************************************************/
+// Remakes the {original} from {lexemes}
+fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
+    struct Config {
+        heredoc: (&'static str, &'static str),
+        inline: (&'static str, &'static str),
+        comment: (&'static str, &'static str),
+    }
+    let config = Config {
+        heredoc: ("{|", "|}"),
+        inline: ("{$", "$}"),
+        comment: ("{#", "#}"),
+    };
+    let mut buffer = String::with_capacity(original.len());
+    let mut mode = CellMode::Text;
+    for token in lexemes {
+        let text = match token.source {
+            Source::Range(start, close) => &original[start..close],
+        };
 
-//fn reconstruct_lexemes() {
-//}
+
+        // If in code cell, we can 
+        match mode {
+            CellMode::HereDoc | CellMode::Inline => {
+                let len = buffer.len();
+                let remaining = &original[len..];
+                let whitespace_len = remaining
+                    .find(|c: char| !c.is_whitespace())
+                    .unwrap_or(0);
+
+                //println!("{:?} {:?}", whitespace_len, text);
+
+                buffer.push_str(&original[len..len + whitespace_len]);
+                assert_eq!(&original[0..len + whitespace_len], buffer,
+                    "\n\nAdded {:?}\n",
+                    &original[len..len + whitespace_len],
+                );
+
+            }
+            _ => {}
+        }
+        match token.me {
+            LexType::Text => buffer.push_str(text),
+            LexType::BlockComment => {
+                buffer.push_str(config.comment.0);
+                buffer.push_str(text);
+                buffer.push_str(config.comment.1);
+            }
+            LexType::HereDoc => {
+                mode = CellMode::HereDoc;
+                buffer.push_str(config.heredoc.0);
+            }
+            LexType::Inline => {
+                mode = CellMode::Inline;
+                buffer.push_str(config.inline.0);
+            }
+            LexType::CodeClose if matches!(mode, CellMode::HereDoc) => {
+                mode = CellMode::Text;
+                buffer.push_str(config.heredoc.1);
+            }
+            LexType::CodeClose if matches!(mode, CellMode::Inline) => {
+                mode = CellMode::Text;
+                buffer.push_str(config.inline.1);
+            }
+            LexType::CodeClose => unreachable!(),
+
+            LexType::Ident => {
+                assert!(text.find(is_invalid_second_ident_char).is_none());
+                buffer.push_str(text)
+            }
+            LexType::Pipe => {
+                assert_eq!("|", text);
+                buffer.push('|');
+            }
+            LexType::ParenStart => {
+                assert_eq!("(", text);
+                buffer.push('(');
+            }
+            LexType::ParenClose => {
+                assert_eq!(")", text);
+                buffer.push(')');
+            }
+            LexType::Stdin => {
+                assert_eq!(".", text);
+                buffer.push('.');
+            }
+
+            LexType::QuoteStart | LexType::QuoteClose => {
+                assert_eq!("\"", text);
+                buffer.push('"');
+            }
+            LexType::Quoted => {
+                buffer.push_str(text);
+            }
+            LexType::QuoteEscaped(_) => buffer.push_str(text),
+            LexType::QuoteBlank => buffer.push_str(text),
+        }
+    }
+
+    assert_eq!(original.len(), buffer.capacity());
+    assert_eq!(original.len(), buffer.len());
+    buffer
+}
