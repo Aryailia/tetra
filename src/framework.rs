@@ -1,7 +1,6 @@
 //run: cargo test -- --nocapture
 
-
-#[derive(Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Source {
     Range(usize, usize),
 }
@@ -14,7 +13,7 @@ impl Source {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Token<T> {
     pub source: Source,
     pub me: T,
@@ -42,10 +41,7 @@ macro_rules! len_utf8 {
 
 impl<T> Token<T> {
     pub fn new(me: T, source: Source) -> Self {
-        Token {
-            source,
-            me,
-        }
+        Token { source, me }
     }
 
     pub fn remap<U>(&self, new: U) -> Token<U> {

@@ -3,7 +3,6 @@
 use crate::framework::{Source, Token};
 use crate::lexer::LexType;
 
-
 pub type ParseOutput = (Vec<Sexpr>, Vec<Token<Arg>>);
 pub type ParseError = Token<&'static str>;
 
@@ -82,23 +81,21 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
     //// Can use indexing to access allocated nodes.
     ////assert_eq!(ast_nodes[three_id], AstNode::Const(3));
 
-    let mut fsm = Fsm::new(debug_source);
+    let mut fsm = Fsm::new(lexemes.len());
     //for l in lexemes {
     //    debug_print_token!(l, debug_source);
     //}
 
     let mut knit_sexpr = Vec::new(); // For the final document concat
-    let mut cell_id = 0;
+    let mut cell_id = 0; // HereDoc headers and bodies get different id's
 
-    // We act as if all documents start with an invisible heredoc at the start 
-    fsm.args.push(Token::new(Arg::PipedStdin, Source::Range(0, 0)));
-    fsm.output.push(Sexpr {
-        cell_id,
-        args: (0, 1),
-    });
-    fsm.args_cursor.move_to(1);
-    knit_sexpr.push(Token::new(SexprType::Output(0), Source::Range(0, 0)));
-
+    // We act as if all documents start with an invisible heredoc at the start
+    // Model after the actions of 'LexType::HereDocClose' branch
+    fsm.args
+        .push(Token::new(Arg::PipedStdin, Source::Range(0, 0)));
+    let output_token = fsm.drain_push_sexpr(cell_id);
+    knit_sexpr.push(output_token);
+    cell_id += 1;
 
     for l in lexemes {
         //debug_print_token!(l, debug_source);
@@ -124,7 +121,8 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 // @TODO: Double check that we have to push SexprType::NewFunction
                 // We push SexprType::NewFunction for multiple commands in the
                 // code body, e.g. "{| cite ''; print() |}"
-                fsm.buffer.push(Token::new(SexprType::NewFunction, source.clone()));
+                fsm.buffer
+                    .push(Token::new(SexprType::NewFunction, source.clone()));
                 fsm.buffer.push(Token::new(SexprType::PipedStdin, source));
             }
             (Mode::Text, LexType::InlineStart) => {
@@ -145,13 +143,14 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             (Mode::Code, LexType::Pipe) => {
                 let output_token = fsm.drain_push_sexpr(cell_id);
                 fsm.buffer.push(output_token);
-                fsm.buffer.push(Token::new(SexprType::Piped, source));
+                fsm.buffer.push(Token::new(SexprType::Pipe, source));
             }
             (Mode::Code, LexType::HereDocClose) => {
                 fsm.mode = Mode::Text;
                 //fsm.drain_push_sexpr(debug_source);
                 let output_token = fsm.drain_push_sexpr(cell_id);
                 knit_sexpr.push(output_token);
+                cell_id += 1;
                 //fsm.buffer.push(output_token);
             }
             (Mode::Code, LexType::InlineClose) => {
@@ -208,29 +207,29 @@ impl Cursor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arg {
     //Literal(usize, usize), // Range indexing into vec[] for {Literal}'s
     Str,
     Char(char),
-    Unknown,         // Range source
-    Output(usize),
+    Unknown, // Range source
+    Reference(usize), // Index into {args} pointing to an 'Arg::Output'
     Stdin,
     // @TODO: Check if this has to be different from Arg::Stdin
     //        I expect this to catch ". cite" expressions
     PipedStdin,
-    Piped,
+    Pipe,
 }
 
 #[derive(Debug)]
-pub enum SexprType {
+enum SexprType {
+    Str,        // Index into {data} array
+    Char(char), // Index into {data} array
     Ident,
     Stdin,
-    Piped,
+    Pipe,
     PipedStdin,
-    Output(usize),  // Index into {sexpr} array
-    Str,  // Index into {data} array
-    Char(char),  // Index into {data} array
+    Reference(usize), // Id that should match {Sexpr.out}
     NewFunction,
 }
 
@@ -251,22 +250,24 @@ struct Fsm {
 
     stdin_range: (usize, usize),
     buffer: Vec<Token<SexprType>>,
-    stack: Vec<usize>,
+    //stack: Vec<usize>, // @TODO: for paraenthesis and bracket balancing
 }
 
 impl Fsm {
-    fn new(debug_source: &str) -> Self {
+    fn new(capacity: usize) -> Self {
+        // Parsing into sexpr will never produce more than the number of lexemes
+        // as we never push 
         Self {
             mode: Mode::Text,
-            output: Vec::new(),
+            output: Vec::with_capacity(capacity),
 
-            args: Vec::new(),
+            args: Vec::with_capacity(capacity),
             args_cursor: Cursor(0),
             args_stdin_index: 0,
 
             stdin_range: (0, 0),
-            buffer: Vec::new(),
-            stack: Vec::new(),
+            buffer: Vec::with_capacity(capacity),
+            //stack: Vec::new(),
         }
     }
 
@@ -285,23 +286,26 @@ impl Fsm {
         for p in parameters {
             //debug_print_token!(p, debug_source);
             match p.me {
+                SexprType::Str => self.args.push(p.remap(Arg::Str)),
+                SexprType::Char(c) => self.args.push(p.remap(Arg::Char(c))),
                 SexprType::Ident => self.args.push(p.remap(Arg::Unknown)),
                 SexprType::Stdin => self.args.push(p.remap(Arg::Stdin)),
                 SexprType::PipedStdin => self.args.push(p.remap(Arg::PipedStdin)),
-                SexprType::Piped => self.args.push(p.remap(Arg::Piped)),
-                SexprType::Output(x) => self.args.push(p.remap(Arg::Output(x))),
-
-                SexprType::Str => self.args.push(p.remap(Arg::Str)),
-                SexprType::Char(c) => self.args.push(p.remap(Arg::Char(c))),
+                SexprType::Pipe => self.args.push(p.remap(Arg::Pipe)),
+                SexprType::Reference(x) => self.args.push(p.remap(Arg::Reference(x))),
                 SexprType::NewFunction => {} // Skip
             }
         }
 
-        let command_index = self.output.len();
+        let args_post_index = self.args.len();
+        let sexpr_index = self.output.len();
         let sexpr = Sexpr {
             cell_id,
-            args: self.args_cursor.move_to(self.args.len()),
+            args: self.args_cursor.move_to(args_post_index),
+            out: sexpr_index,
         };
+        //self.args.push(Token::new(Arg::Output, Source::Range(0, 0)));
+        self.args_cursor.move_to(args_post_index);
 
         self.output.push(sexpr);
 
@@ -309,7 +313,7 @@ impl Fsm {
         //    println!("- {:?}", a);
         //}
         // @TODO: range of all args?
-        Token::new(SexprType::Output(command_index), Source::Range(0, 0))
+        Token::new(SexprType::Reference(sexpr_index), Source::Range(0, 0))
     }
 
     //fn print_command(&self, cmd: &Sexpr, debug_source: &str) {
@@ -321,8 +325,8 @@ impl Fsm {
     //            Arg::Unknown(s) => print!("{{{}}}", s.to_str(debug_source)),
     //            Arg::Stdin => print!("."),
     //            Arg::PipedStdin => print!(".>"),
-    //            Arg::Output(i) => print!("{{{}}}", i),
-    //            Arg::Piped => print!(" |> "),
+    //            Arg::Reference(i) => print!("{{{}}}", i),
+    //            Arg::Pipe => print!(" |> "),
     //        }
     //        print!(", ");
     //    }
@@ -330,32 +334,39 @@ impl Fsm {
     //}
 }
 
-#[derive(Debug)]
+// {cell_id} increments everytime we arrive a the head or body, i.e. the head
+//  and body differ in id by 1
+#[derive(Clone, Debug)]
 pub struct Sexpr {
     pub cell_id: usize, // for use in determining the STDIN
     pub args: (usize, usize),
+    pub out: usize,
 }
-
 
 impl Sexpr {
     pub fn to_display(&self, args: &[Token<Arg>], debug_source: &str) -> String {
         let mut display = format!("({}): (", self.cell_id);
         for arg in &args[self.args.0..self.args.1] {
-            match arg.me {
-                Arg::Str => display.push_str(&format!("{:?}", arg.to_str(debug_source))),
-                Arg::Char(c) => display.push_str(&format!("{:?}", c)),
-                // This is either a variable or function identifier
-                Arg::Unknown => display.push_str(arg.to_str(debug_source)),
-                Arg::Stdin => display.push('.'),
-                Arg::PipedStdin => display.push_str(".|>"),
-                // Temp variables for the output of concats, functions, etc.
-                Arg::Output(i) => display.push_str(&format!("{{{}}}", i)),
-                Arg::Piped => display.push_str(" |> "), // Borrow f# syntax
-            }
+            display.push_str(&arg.to_display(debug_source));
             display.push_str(", ");
         }
-        display.push_str(");");
+        display.push_str(&format!(") -> {};", self.out));
         display
     }
 }
 
+impl Token<Arg> {
+    pub fn to_display(&self, source: &str) -> String {
+        match self.me {
+            Arg::Str => format!("{:?}", self.to_str(source)),
+            Arg::Char(c) => format!("{:?}", c),
+            // This is either a variable or function identifier
+            Arg::Unknown => self.to_str(source).to_string(),
+            Arg::Stdin => '.'.to_string(),
+            Arg::PipedStdin => ".|>".to_string(),
+            // Temp variables for the output of concats, functions, etc.
+            Arg::Reference(i) => format!("{{{}}}", i),
+            Arg::Pipe => " |> ".to_string(), // Borrow f# syntax
+        }
+    }
+}
