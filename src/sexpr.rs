@@ -3,31 +3,33 @@
 use crate::framework::{Source, Token};
 use crate::lexer::LexType;
 
-type PullParserOutput = Result<Token<()>, Token<&'static str>>;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum Node {
-    Const(i64),
-    Literal(usize),
-    Function { args: Vec<usize> },
-    List(Vec<Node>),
-    //Add {
-    //    lhs: AstNodeId,
-    //    rhs: AstNodeId,
-    //},
-    //Sub {
-    //    lhs: AstNodeId,
-    //    rhs: AstNodeId,
-    //},
-    //Mul {
-    //    lhs: AstNodeId,
-    //    rhs: AstNodeId,
-    //},
-    //Div {
-    //    lhs: AstNodeId,
-    //    rhs: AstNodeId,
-    //},
-}
+pub type ParseOutput = (Vec<Sexpr>, Vec<Arg>);
+pub type ParseError = Token<&'static str>;
+
+//#[derive(Debug, Eq, PartialEq)]
+//pub enum Node {
+//    Const(i64),
+//    Literal(usize),
+//    Function { args: Vec<usize> },
+//    List(Vec<Node>),
+//    //Add {
+//    //    lhs: AstNodeId,
+//    //    rhs: AstNodeId,
+//    //},
+//    //Sub {
+//    //    lhs: AstNodeId,
+//    //    rhs: AstNodeId,
+//    //},
+//    //Mul {
+//    //    lhs: AstNodeId,
+//    //    rhs: AstNodeId,
+//    //},
+//    //Div {
+//    //    lhs: AstNodeId,
+//    //    rhs: AstNodeId,
+//    //},
+//}
 
 macro_rules! debug_print_token {
     ($token:expr, $source_text:expr) => {
@@ -59,7 +61,7 @@ macro_rules! debug_print_token {
 // Additionally, we haven't discriminated variable and function identifiers at
 // this stage yet. E.g. "cite len, a" might all be functions.
 
-pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> PullParserOutput {
+pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOutput, ParseError> {
     //let mut arena = Arena::<Node>::new();
 
     //// Create the AST for `a * (b + 3)`.
@@ -167,6 +169,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> PullParserOutp
     }
     // Push the final heredoc body as a concat-display command
     let _output_token = fsm.drain_push_sexpr(debug_source);
+    // Do not push this {_output_token} into the buffer
     fsm.buffer.extend(knit_sexpr);
     fsm.drain_push_sexpr(debug_source);
 
@@ -174,7 +177,8 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> PullParserOutp
     //    print!(" remaining  ");
     //    debug_print_token!(p, debug_source);
     //}
-    Err(Token::new("Finished parsing", Source::Range(0, 0)))
+    //Err(Token::new("Finished parsing", Source::Range(0, 0)))
+    Ok((fsm.output, fsm.args))
 }
 
 struct Cursor(usize);
@@ -187,8 +191,9 @@ impl Cursor {
     }
 }
 
+//kk
 #[derive(Debug)]
-enum Arg {
+pub enum Arg {
     //Literal(usize, usize), // Range indexing into vec[] for {Literal}'s
     Str(Source),
     Char(char, Source),
@@ -197,13 +202,6 @@ enum Arg {
     Stdin,
     PipedStdin,
     Piped,
-}
-
-#[derive(Debug)]
-enum Mode {
-    Text,
-    Code,
-    Quote,
 }
 
 #[derive(Debug)]
@@ -219,23 +217,22 @@ enum SexprType {
 }
 
 #[derive(Debug)]
-enum CodeType {
-    Block,
-    Inline,
+enum Mode {
+    Text,
+    Code,
+    Quote,
 }
 
 struct Fsm {
     mode: Mode,
-    output: Vec<Command>,
+    output: Vec<Sexpr>,
 
     args: Vec<Arg>,
     args_cursor: Cursor,
     args_stdin_index: usize,
 
-    code_type: CodeType,
     stdin_range: (usize, usize),
     buffer: Vec<Token<SexprType>>,
-    buffer_cursor: Cursor, // Move it when we advance a block
     stack: Vec<usize>,
 }
 
@@ -249,10 +246,8 @@ impl Fsm {
             args_cursor: Cursor(0),
             args_stdin_index: 0,
 
-            code_type: CodeType::Block, // doesn't matter what we start with
             stdin_range: (0, 0),
             buffer: Vec::new(),
-            buffer_cursor: Cursor(0),
             stack: Vec::new(),
         }
     }
@@ -285,11 +280,12 @@ impl Fsm {
         }
 
         let command_index = self.output.len();
-        let command = Command(self.args_cursor.move_to(self.args.len()));
+        let sexpr = Sexpr {
+            cell_id: 0,
+            args: self.args_cursor.move_to(self.args.len()),
+        };
 
-        print!("{} ", self.output.len());
-        self.print_command(&command, debug_source);
-        self.output.push(command);
+        self.output.push(sexpr);
 
         //for a in &self.buffer {
         //    println!("- {:?}", a);
@@ -298,23 +294,48 @@ impl Fsm {
         Token::new(SexprType::Output(command_index), Source::Range(0, 0))
     }
 
-    fn print_command(&self, cmd: &Command, debug_source: &str) {
-        print!("Command: (");
-        for arg in &self.args[cmd.0.0..cmd.0.1] {
-            match arg {
-                Arg::Str(s) => print!("{:?}", s.to_str(debug_source)),
-                Arg::Char(c, _) => print!("{:?}", c),
-                Arg::Unknown(s) => print!("{{{}}}", s.to_str(debug_source)),
-                Arg::Stdin => print!("."),
-                Arg::PipedStdin => print!(".>"),
-                Arg::Output(i) => print!("{{{}}}", i),
-                Arg::Piped => print!(" |> "),
-            }
-            print!(", ");
-        }
-        println!(");");
-    }
+    //fn print_command(&self, cmd: &Sexpr, debug_source: &str) {
+    //    print!("Command: (");
+    //    for arg in &self.args[cmd.0.0..cmd.0.1] {
+    //        match arg {
+    //            Arg::Str(s) => print!("{:?}", s.to_str(debug_source)),
+    //            Arg::Char(c, _) => print!("{:?}", c),
+    //            Arg::Unknown(s) => print!("{{{}}}", s.to_str(debug_source)),
+    //            Arg::Stdin => print!("."),
+    //            Arg::PipedStdin => print!(".>"),
+    //            Arg::Output(i) => print!("{{{}}}", i),
+    //            Arg::Piped => print!(" |> "),
+    //        }
+    //        print!(", ");
+    //    }
+    //    println!(");");
+    //}
 }
 
 #[derive(Debug)]
-struct Command((usize, usize));
+pub struct Sexpr {
+    cell_id: usize,
+    args: (usize, usize),
+}
+
+
+impl Sexpr {
+    pub fn to_display(&self, args: &[Arg], debug_source: &str) -> String {
+        let mut display = "(".to_string();
+        for arg in &args[self.args.0..self.args.1] {
+            match arg {
+                Arg::Str(s) => display.push_str(&format!("{:?}", s.to_str(debug_source))),
+                Arg::Char(c, _) => display.push_str(&format!("{:?}", c)),
+                Arg::Unknown(s) => display.push_str(s.to_str(debug_source)),
+                Arg::Stdin => display.push('.'),
+                Arg::PipedStdin => display.push_str(".>"),
+                Arg::Output(i) => display.push_str(&format!("{{{}}}", i)),
+                Arg::Piped => display.push_str(" |> "),
+            }
+            display.push_str(", ");
+        }
+        display.push_str(");");
+        display
+    }
+}
+

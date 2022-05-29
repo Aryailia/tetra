@@ -4,9 +4,9 @@
 
 #[macro_use]
 mod framework;
+mod errors;
 mod lexer;
 mod sexpr;
-mod errors;
 
 //use std::fmt::Debug;
 //
@@ -25,9 +25,6 @@ mod errors;
 //        //},
 //    }
 //}
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -66,7 +63,11 @@ Final stuff
     fn it_works() {
         let lexemes = log(FILE, lexer::process(FILE, true));
         //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(FILE)));
-        log(FILE, sexpr::process(&lexemes, FILE));
+        let (sexprs, args) = log(FILE, sexpr::process(&lexemes, FILE));
+        sexprs
+            .iter()
+            .enumerate()
+            .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
     }
 
     #[allow(dead_code)]
@@ -84,6 +85,4 @@ Final stuff
             //},
         }
     }
-
-
 }
