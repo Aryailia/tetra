@@ -49,14 +49,16 @@ macro_rules! debug_print_token {
     };
 }
 
-// Processes a lexeme list into a topologically sorted s-expr list.
+// Processes a lexeme list into an almost topologically sorted s-expr list.
+// (Everything but STDIN is topologically sorted)
 // Essentially it just groups arguments into individual commands
 //
 // S-expr is terminology borrowed from Lisp.
 // The key differences between s-expr and full parsed functions are:
-// - parameter piping reording is not yet completed
+// - parameter piping reordering is not yet completed
 //   - e.g. (s-expr order) "5 | cite 3" -> (function order) "cite 3, 5"
 // - no identifier is marked as the function name yet
+// - STDIN arguments are not resolved to which body their refer
 //
 // Additionally, we haven't discriminated variable and function identifiers at
 // this stage yet. E.g. "cite len, a" might all be functions.
@@ -80,12 +82,24 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
     //// Can use indexing to access allocated nodes.
     ////assert_eq!(ast_nodes[three_id], AstNode::Const(3));
 
-    let mut fsm = Fsm::new();
+    let mut fsm = Fsm::new(debug_source);
     //for l in lexemes {
     //    debug_print_token!(l, debug_source);
     //}
 
-    let mut knit_sexpr = Vec::new();
+    let mut knit_sexpr = Vec::new(); // For the final document concat
+    let mut cell_id = 0;
+
+    // We act as if all documents start with an invisible heredoc at the start 
+    fsm.args.push(Arg::PipedStdin);
+    fsm.output.push(Sexpr {
+        cell_id,
+        args: (0, 1),
+    });
+    fsm.args_cursor.move_to(1);
+    knit_sexpr.push(Token::new(SexprType::Output(0), Source::Range(0, 0)));
+
+
     for l in lexemes {
         //debug_print_token!(l, debug_source);
         ////let stdin = 0;
@@ -99,7 +113,8 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             (Mode::Text, LexType::BlockComment) => {} // Skip comments
             (Mode::Text, LexType::HereDocStart) => {
                 fsm.mode = Mode::Code;
-                let _output_token = fsm.drain_push_sexpr(debug_source);
+                let _output_token = fsm.drain_push_sexpr(cell_id);
+                cell_id += 1;
 
                 // Do not push the concat for the heredoc body since the output
                 // is pushed onto {knit_sexpr} on the LexType::HereDocClose
@@ -128,20 +143,20 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 fsm.buffer.push(Token::new(SexprType::Ident, source));
             }
             (Mode::Code, LexType::Pipe) => {
-                let output_token = fsm.drain_push_sexpr(debug_source);
+                let output_token = fsm.drain_push_sexpr(cell_id);
                 fsm.buffer.push(output_token);
                 fsm.buffer.push(Token::new(SexprType::Piped, source));
             }
             (Mode::Code, LexType::HereDocClose) => {
                 fsm.mode = Mode::Text;
                 //fsm.drain_push_sexpr(debug_source);
-                let output_token = fsm.drain_push_sexpr(debug_source);
+                let output_token = fsm.drain_push_sexpr(cell_id);
                 knit_sexpr.push(output_token);
                 //fsm.buffer.push(output_token);
             }
             (Mode::Code, LexType::InlineClose) => {
                 fsm.mode = Mode::Text;
-                let output_token = fsm.drain_push_sexpr(debug_source);
+                let output_token = fsm.drain_push_sexpr(cell_id);
                 fsm.buffer.push(output_token);
             }
 
@@ -161,17 +176,19 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             }
             (Mode::Quote, LexType::QuoteClose) => {
                 fsm.mode = Mode::Code;
-                let output_token = fsm.drain_push_sexpr(debug_source);
+                let output_token = fsm.drain_push_sexpr(cell_id);
                 fsm.buffer.push(output_token);
             }
             (Mode::Quote, _) => debug_print_token!(die@l, debug_source),
         }
     }
+
     // Push the final heredoc body as a concat-display command
-    let _output_token = fsm.drain_push_sexpr(debug_source);
+    // Model this after LexType::HereDocStart branch of match
+    let _output_token = fsm.drain_push_sexpr(cell_id);
     // Do not push this {_output_token} into the buffer
     fsm.buffer.extend(knit_sexpr);
-    fsm.drain_push_sexpr(debug_source);
+    fsm.drain_push_sexpr(cell_id + 1);
 
     //for p in fsm.buffer {
     //    print!(" remaining  ");
@@ -200,6 +217,8 @@ pub enum Arg {
     Unknown(Source),         // Range source
     Output(usize),
     Stdin,
+    // @TODO: Check if this has to be different from Arg::Stdin
+    //        I expect this to catch ". cite" expressions
     PipedStdin,
     Piped,
 }
@@ -237,7 +256,7 @@ struct Fsm {
 }
 
 impl Fsm {
-    fn new() -> Self {
+    fn new(debug_source: &str) -> Self {
         Self {
             mode: Mode::Text,
             output: Vec::new(),
@@ -252,7 +271,7 @@ impl Fsm {
         }
     }
 
-    fn drain_push_sexpr(&mut self, debug_source: &str) -> Token<SexprType> {
+    fn drain_push_sexpr(&mut self, cell_id: usize) -> Token<SexprType> {
         //for a in &self.buffer {
         //    println!(".-> {:?}", a);
         //}
@@ -281,7 +300,7 @@ impl Fsm {
 
         let command_index = self.output.len();
         let sexpr = Sexpr {
-            cell_id: 0,
+            cell_id,
             args: self.args_cursor.move_to(self.args.len()),
         };
 
@@ -314,23 +333,25 @@ impl Fsm {
 
 #[derive(Debug)]
 pub struct Sexpr {
-    cell_id: usize,
+    cell_id: usize, // for use in determining the STDIN
     args: (usize, usize),
 }
 
 
 impl Sexpr {
     pub fn to_display(&self, args: &[Arg], debug_source: &str) -> String {
-        let mut display = "(".to_string();
+        let mut display = format!("({}): (", self.cell_id);
         for arg in &args[self.args.0..self.args.1] {
             match arg {
                 Arg::Str(s) => display.push_str(&format!("{:?}", s.to_str(debug_source))),
                 Arg::Char(c, _) => display.push_str(&format!("{:?}", c)),
+                // This is either a variable or function identifier
                 Arg::Unknown(s) => display.push_str(s.to_str(debug_source)),
                 Arg::Stdin => display.push('.'),
-                Arg::PipedStdin => display.push_str(".>"),
+                Arg::PipedStdin => display.push_str(".|>"),
+                // Temp variables for the output of concats, functions, etc.
                 Arg::Output(i) => display.push_str(&format!("{{{}}}", i)),
-                Arg::Piped => display.push_str(" |> "),
+                Arg::Piped => display.push_str(" |> "), // Borrow f# syntax
             }
             display.push_str(", ");
         }
