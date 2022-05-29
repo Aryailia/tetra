@@ -5,7 +5,7 @@
 #[macro_use]
 mod framework;
 mod lexer;
-mod parser;
+mod sexpr;
 mod errors;
 
 //use std::fmt::Debug;
@@ -66,7 +66,7 @@ Final stuff
     fn it_works() {
         let lexemes = log(FILE, lexer::process(FILE, true));
         //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(FILE)));
-        log(FILE, parser::process(&lexemes, FILE));
+        log(FILE, sexpr::process(&lexemes, FILE));
     }
 
     #[allow(dead_code)]
