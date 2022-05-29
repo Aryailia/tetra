@@ -4,7 +4,7 @@ use crate::framework::{Source, Token};
 use crate::lexer::LexType;
 
 
-pub type ParseOutput = (Vec<Sexpr>, Vec<Arg>);
+pub type ParseOutput = (Vec<Sexpr>, Vec<Token<Arg>>);
 pub type ParseError = Token<&'static str>;
 
 //#[derive(Debug, Eq, PartialEq)]
@@ -91,7 +91,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
     let mut cell_id = 0;
 
     // We act as if all documents start with an invisible heredoc at the start 
-    fsm.args.push(Arg::PipedStdin);
+    fsm.args.push(Token::new(Arg::PipedStdin, Source::Range(0, 0)));
     fsm.output.push(Sexpr {
         cell_id,
         args: (0, 1),
@@ -208,13 +208,12 @@ impl Cursor {
     }
 }
 
-//kk
 #[derive(Debug)]
 pub enum Arg {
     //Literal(usize, usize), // Range indexing into vec[] for {Literal}'s
-    Str(Source),
-    Char(char, Source),
-    Unknown(Source),         // Range source
+    Str,
+    Char(char),
+    Unknown,         // Range source
     Output(usize),
     Stdin,
     // @TODO: Check if this has to be different from Arg::Stdin
@@ -224,7 +223,7 @@ pub enum Arg {
 }
 
 #[derive(Debug)]
-enum SexprType {
+pub enum SexprType {
     Ident,
     Stdin,
     Piped,
@@ -246,7 +245,7 @@ struct Fsm {
     mode: Mode,
     output: Vec<Sexpr>,
 
-    args: Vec<Arg>,
+    args: Vec<Token<Arg>>,
     args_cursor: Cursor,
     args_stdin_index: usize,
 
@@ -286,14 +285,14 @@ impl Fsm {
         for p in parameters {
             //debug_print_token!(p, debug_source);
             match p.me {
-                SexprType::Ident => self.args.push(Arg::Unknown(p.source)),
-                SexprType::Stdin => self.args.push(Arg::Stdin),
-                SexprType::PipedStdin => self.args.push(Arg::PipedStdin),
-                SexprType::Piped => self.args.push(Arg::Piped),
-                SexprType::Output(x) => self.args.push(Arg::Output(x)),
+                SexprType::Ident => self.args.push(p.remap(Arg::Unknown)),
+                SexprType::Stdin => self.args.push(p.remap(Arg::Stdin)),
+                SexprType::PipedStdin => self.args.push(p.remap(Arg::PipedStdin)),
+                SexprType::Piped => self.args.push(p.remap(Arg::Piped)),
+                SexprType::Output(x) => self.args.push(p.remap(Arg::Output(x))),
 
-                SexprType::Str => self.args.push(Arg::Str(p.source)),
-                SexprType::Char(c) => self.args.push(Arg::Char(c, p.source)),
+                SexprType::Str => self.args.push(p.remap(Arg::Str)),
+                SexprType::Char(c) => self.args.push(p.remap(Arg::Char(c))),
                 SexprType::NewFunction => {} // Skip
             }
         }
@@ -333,20 +332,20 @@ impl Fsm {
 
 #[derive(Debug)]
 pub struct Sexpr {
-    cell_id: usize, // for use in determining the STDIN
-    args: (usize, usize),
+    pub cell_id: usize, // for use in determining the STDIN
+    pub args: (usize, usize),
 }
 
 
 impl Sexpr {
-    pub fn to_display(&self, args: &[Arg], debug_source: &str) -> String {
+    pub fn to_display(&self, args: &[Token<Arg>], debug_source: &str) -> String {
         let mut display = format!("({}): (", self.cell_id);
         for arg in &args[self.args.0..self.args.1] {
-            match arg {
-                Arg::Str(s) => display.push_str(&format!("{:?}", s.to_str(debug_source))),
-                Arg::Char(c, _) => display.push_str(&format!("{:?}", c)),
+            match arg.me {
+                Arg::Str => display.push_str(&format!("{:?}", arg.to_str(debug_source))),
+                Arg::Char(c) => display.push_str(&format!("{:?}", c)),
                 // This is either a variable or function identifier
-                Arg::Unknown(s) => display.push_str(s.to_str(debug_source)),
+                Arg::Unknown => display.push_str(arg.to_str(debug_source)),
                 Arg::Stdin => display.push('.'),
                 Arg::PipedStdin => display.push_str(".|>"),
                 // Temp variables for the output of concats, functions, etc.

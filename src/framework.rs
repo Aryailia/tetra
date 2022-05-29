@@ -48,6 +48,13 @@ impl<T> Token<T> {
         }
     }
 
+    pub fn remap<U>(&self, new: U) -> Token<U> {
+        Token {
+            me: new,
+            source: self.source.clone(),
+        }
+    }
+
     pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
         self.source.to_str(original)
     }
