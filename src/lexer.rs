@@ -24,14 +24,15 @@ pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError>
 /******************************************************************************
  * Cell-level FSM
  ******************************************************************************/
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LexType {
     // Cell-level stuff
     Text,
     BlockComment,
-    HereDoc,
-    Inline,
-    CodeClose,
+    HereDocStart,
+    HereDocClose,
+    InlineStart,
+    InlineClose,
 
     // Expression-level stuff
     Ident,
@@ -188,12 +189,12 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
                 let (found, next_mode, transition, advance_amount) =
                     if current_str.starts_with(fsm.heredoc.0) {
                         let s = Source::Range(curr, curr + fsm.heredoc.0.len());
-                        let t = Token::new(LexType::HereDoc, s);
+                        let t = Token::new(LexType::HereDocStart, s);
                         let trans = Some((CellMode::HereDoc, t));
                         (true, CellMode::Transition, trans, fsm.heredoc.0.len())
                     } else if current_str.starts_with(fsm.inline.0) {
                         let s = Source::Range(curr, curr + fsm.inline.0.len());
-                        let t = Token::new(LexType::Inline, s);
+                        let t = Token::new(LexType::InlineStart, s);
                         let trans = Some((CellMode::Inline, t));
                         (true, CellMode::Transition, trans, fsm.inline.0.len())
                     } else if current_str.starts_with(fsm.comment.0) {
@@ -241,25 +242,39 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
             Err(Token::new("Comment block no ending tag", source))
         }
 
-        CellMode::HereDoc | CellMode::Inline => {
-            #[allow(dead_code)]
-            let closer_str = match fsm.mode {
-                CellMode::HereDoc => fsm.heredoc.1,
-                CellMode::Inline => fsm.inline.1,
-                _ => unreachable!(),
-            };
-
-            let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, closer_str);
+        CellMode::HereDoc => {
+            let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, fsm.heredoc.1, LexType::HereDocClose);
             if is_done {
                 fsm.mode = CellMode::Text;
             }
-            //if t.is_ok() {
-            //    walker.skip(walker.ch.len_utf8() + closer_len);
-            //    fsm.mode = CellMode::Transition;
-            //    //fsm.transition_to = Some(());
-            //}
             t
         }
+        CellMode::Inline => {
+            let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, fsm.inline.1, LexType::InlineClose);
+            if is_done {
+                fsm.mode = CellMode::Text;
+            }
+            t
+        }
+        //CellMode::HereDoc | CellMode::Inline => {
+        //    #[allow(dead_code)]
+        //    let (closer_str, closer) = match fsm.mode {
+        //        CellMode::HereDoc => (fsm.heredoc.1, LexType::HereDocClose),
+        //        CellMode::Inline => (fsm.inline.1, LexType::InlineClose),
+        //        _ => unreachable!(),
+        //    };
+
+        //    let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, closer_str, closer);
+        //    if is_done {
+        //        fsm.mode = CellMode::Text;
+        //    }
+        //    //if t.is_ok() {
+        //    //    walker.skip(walker.ch.len_utf8() + closer_len);
+        //    //    fsm.mode = CellMode::Transition;
+        //    //    //fsm.transition_to = Some(());
+        //    //}
+        //    t
+        //}
         CellMode::Finish => Ok(None),
         //_ => Ok(None),
     }
@@ -294,7 +309,7 @@ fn is_invalid_second_ident_char(c: char) -> bool {
     c != '_' && (c.is_ascii_punctuation() || c.is_whitespace())
 }
 
-fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer: &str) -> (PullParseOutput, bool) {
+fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, closer: LexType) -> (PullParseOutput, bool) {
     // Eat whitespace
     walker.advance_until(|c| !c.is_whitespace());
 
@@ -311,8 +326,8 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer: &str) -> (PullP
     // Main FSM branching handling
     let (maybe_token_type, skip_amount, finished) = match (&fsm.mode, ch) {
         // Everything else
-        (CodeMode::Regular, _) if walker.original[curr..].starts_with(closer) => {
-            (LexType::CodeClose, closer.len(), true)
+        (CodeMode::Regular, _) if walker.original[curr..].starts_with(closer_str) => {
+            (closer, closer_str.len(), true)
         }
         (CodeMode::Regular, _) if ch.is_ascii_alphabetic() => {
             // First check in 'if'
@@ -444,23 +459,22 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
                 buffer.push_str(text);
                 buffer.push_str(config.comment.1);
             }
-            LexType::HereDoc => {
+            LexType::HereDocStart => {
                 mode = CellMode::HereDoc;
                 buffer.push_str(config.heredoc.0);
             }
-            LexType::Inline => {
+            LexType::InlineStart => {
                 mode = CellMode::Inline;
                 buffer.push_str(config.inline.0);
             }
-            LexType::CodeClose if matches!(mode, CellMode::HereDoc) => {
+            LexType::HereDocClose => {
                 mode = CellMode::Text;
                 buffer.push_str(config.heredoc.1);
             }
-            LexType::CodeClose if matches!(mode, CellMode::Inline) => {
+            LexType::InlineClose => {
                 mode = CellMode::Text;
                 buffer.push_str(config.inline.1);
             }
-            LexType::CodeClose => unreachable!(),
 
             LexType::Ident => {
                 assert!(text.find(is_invalid_second_ident_char).is_none());

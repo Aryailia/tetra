@@ -8,6 +8,27 @@ mod lexer;
 mod parser;
 mod errors;
 
+//use std::fmt::Debug;
+//
+//#[allow(dead_code)]
+//fn log<T, E: Debug>(original: &str, result: Result<T, framework::Token<E>>) -> T {
+//    match result {
+//        Ok(s) => s,
+//        Err(e) => {
+//            eprintln!("{} {:?}", e.get_context(original), e);
+//            std::process::exit(1);
+//            //panic!("\n{:?}\n{}", e, e.get_context(original));
+//        }
+//        //Err(e) => match e {
+//        //    CustomErr::Parse(err) => panic!("\nERROR: {:?}\n", err.msg()),
+//        //    err => panic!("{:?}", err),
+//        //},
+//    }
+//}
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -16,32 +37,36 @@ mod tests {
 
     const FILE: &str = r#"
 :title: Hello
-:bibliography:{| pandoc | cite (narrative (at_hello . )) |}
+{# Comment #}
+:bibliography: {$ env "BIBLIOGRAPHY" $}
+{# | test_pipe  #}
+
+{| run "graphviz" hello | prettify .  |}
+digraph {
+    A -> B
+    A -> C
+    {$ include "nodes" $}
+}
+{| end |}
 
 == Lorem
-
-This must be a list
-
-{# because of this comment #}
-
-Meep
+Some text
 
 {$ "This is a quote that\nshould be included" $}
 
-{| if (nottrue) |}
-
-
+{| if(nottrue) |}
 Come to the dark side of the moon
-
 {| endif |}
 
+Final stuff
 "#;
 
     #[test]
     #[allow(dead_code)]
     fn it_works() {
-        log(FILE, lexer::process(FILE, true));
-        return;
+        let lexemes = log(FILE, lexer::process(FILE, true));
+        //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(FILE)));
+        log(FILE, parser::process(&lexemes, FILE));
     }
 
     #[allow(dead_code)]

@@ -1,9 +1,17 @@
 //run: cargo test -- --nocapture
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Source {
     Range(usize, usize),
+}
+
+impl Source {
+    pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
+        match self {
+            Source::Range(start, close) => &original[*start..*close],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -38,6 +46,10 @@ impl<T> Token<T> {
             source,
             me,
         }
+    }
+
+    pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
+        self.source.to_str(original)
     }
 
     pub fn get_context(&self, original: &str) -> String {
