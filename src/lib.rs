@@ -4,6 +4,7 @@
 
 #[macro_use]
 mod framework;
+mod ast;
 mod errors;
 mod lexer;
 mod sexpr;
@@ -61,13 +62,18 @@ Final stuff
     #[test]
     #[allow(dead_code)]
     fn it_works() {
+        let _function_list = ["hello", "cite"];
         let lexemes = log(FILE, lexer::process(FILE, true));
         //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(FILE)));
         let (sexprs, args) = log(FILE, sexpr::process(&lexemes, FILE));
-        sexprs
-            .iter()
-            .enumerate()
-            .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
+        //sexprs
+        //    .iter()
+        //    .enumerate()
+        //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
+        let (ast, args) = log(FILE, ast::process(&sexprs, &args, FILE));
+        //ast.iter()
+        //    .enumerate()
+        //    .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
     }
 
     #[allow(dead_code)]
