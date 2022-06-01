@@ -8,6 +8,7 @@ mod ast;
 mod errors;
 mod lexer;
 mod sexpr;
+mod run;
 
 //use std::fmt::Debug;
 //
@@ -74,6 +75,7 @@ Final stuff
         //ast.iter()
         //    .enumerate()
         //    .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
+        log(FILE, run::run(&ast, &args, &_function_list, FILE));
     }
 
     #[allow(dead_code)]
