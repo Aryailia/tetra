@@ -163,7 +163,14 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 fsm.mode = Mode::Quote;
                 fsm.buffer.push(Token::new(SexprType::NewFunction, source));
             }
-            (Mode::Code, _) => {}
+            (Mode::Code, LexType::CmdSeparator) => {
+                // "display ''; cite" means we ignore the output of the first command
+                let _output_token = fsm.drain_push_sexpr(cell_id);
+                fsm.buffer.push(Token::new(SexprType::NewFunction, source));
+            }
+            (Mode::Code, LexType::ParenStart) => {} // @TODO
+            (Mode::Code, LexType::ParenClose) => {} // @TODO
+            (Mode::Code, _) => return Err(Token::new("Unhandled token", source)),
             //(Mode::Code, _) => debug_print_token!(die@l, debug_source),
 
             ////////////////////////////////////////////////////////////////////

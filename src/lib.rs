@@ -40,7 +40,7 @@ mod tests {
 :bibliography: {$ env "BIBLIOGRAPHY" $}
 {# | test_pipe  #}
 
-{| run "graphviz" hello | prettify .  |}
+{| run "graphviz" hello | prettify . ; env . |}
 digraph {
     A -> B
     A -> C

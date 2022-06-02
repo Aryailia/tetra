@@ -34,6 +34,10 @@ pub enum LexType {
     InlineStart,
     InlineClose,
 
+    //ArgSeparator,
+    CmdSeparator,
+    //Assign,
+
     // Expression-level stuff
     Ident,
     Pipe,
@@ -344,6 +348,7 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
         (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
         (CodeMode::Regular, ')') => (LexType::ParenClose, len_utf8!('|' => 1), false),
         (CodeMode::Regular, '.') => (LexType::Stdin, len_utf8!('.' => 1), false),
+        (CodeMode::Regular, ';') => (LexType::CmdSeparator, len_utf8!(';' => 1), false),
         (CodeMode::Regular, '"') => {
             fsm.mode = CodeMode::Quote;
             (LexType::QuoteStart, len_utf8!('"' => 1), false)
@@ -414,6 +419,7 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
  ******************************************************************************/
 // Remakes the {original} from {lexemes}
 fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
+    // @TODO: Input config as an argument
     struct Config {
         heredoc: (&'static str, &'static str),
         inline: (&'static str, &'static str),
@@ -426,13 +432,18 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
     };
     let mut buffer = String::with_capacity(original.len());
     let mut mode = CellMode::Text;
+
+    // Because the lexing process completely ignores whitespace, we reconstruct
+    // {original} by changing each lexeme into its string equivalent and then
+    // checking {original} to see if we need to add any whitespace.
     for token in lexemes {
         let text = match token.source {
             Source::Range(start, close) => &original[start..close],
         };
 
 
-        // If in code cell, we can 
+        // Whitespace is only deleted in code cells
+        // Add whitespace based on {original} and our current position
         match mode {
             CellMode::HereDoc | CellMode::Inline => {
                 let len = buffer.len();
@@ -452,6 +463,20 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             }
             _ => {}
         }
+
+
+        macro_rules! push_check {
+            ($buffer:ident $char:literal if $text:ident == $str:literal ) => {
+                {
+                    assert_eq!($str, $text);
+                    $buffer.push($char);
+                }
+
+            };
+        }
+
+
+        // Convert each lexeme to its string equivalent and push onto the buffer
         match token.me {
             LexType::Text => buffer.push_str(text),
             LexType::BlockComment => {
@@ -476,34 +501,22 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
                 buffer.push_str(config.inline.1);
             }
 
+            //LexType::ArgSeparator => push_check!(buffer ',' if text == ","),
+            LexType::CmdSeparator => push_check!(buffer ';' if text == ";"),
+            //LexType::Assign => push_check!(buffer '=' if text == "="),
+
+
             LexType::Ident => {
                 assert!(text.find(is_invalid_second_ident_char).is_none());
                 buffer.push_str(text)
             }
-            LexType::Pipe => {
-                assert_eq!("|", text);
-                buffer.push('|');
-            }
-            LexType::ParenStart => {
-                assert_eq!("(", text);
-                buffer.push('(');
-            }
-            LexType::ParenClose => {
-                assert_eq!(")", text);
-                buffer.push(')');
-            }
-            LexType::Stdin => {
-                assert_eq!(".", text);
-                buffer.push('.');
-            }
+            LexType::Pipe => push_check!(buffer '|' if text == "|"),
+            LexType::ParenStart => push_check!(buffer '(' if text == "("),
+            LexType::ParenClose => push_check!(buffer ')' if text == ")"),
+            LexType::Stdin => push_check!(buffer '.' if text == "."),
 
-            LexType::QuoteStart | LexType::QuoteClose => {
-                assert_eq!("\"", text);
-                buffer.push('"');
-            }
-            LexType::Quoted => {
-                buffer.push_str(text);
-            }
+            LexType::QuoteStart | LexType::QuoteClose => push_check!(buffer '"' if text == "\""),
+            LexType::Quoted => buffer.push_str(text),
             LexType::QuoteEscaped(_) => buffer.push_str(text),
             LexType::QuoteBlank => buffer.push_str(text),
         }
