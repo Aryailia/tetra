@@ -170,7 +170,10 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             }
             (Mode::Code, LexType::ParenStart) => {} // @TODO
             (Mode::Code, LexType::ParenClose) => {} // @TODO
-            (Mode::Code, _) => return Err(Token::new("Unhandled token", source)),
+            (Mode::Code, LexType::Assign) => {
+                fsm.buffer.push(Token::new(SexprType::Assign, source));
+            }
+            (Mode::Code, _) => return Err(Token::new("Sexpr.rs: Unhandled token", source)),
             //(Mode::Code, _) => debug_print_token!(die@l, debug_source),
 
             ////////////////////////////////////////////////////////////////////
@@ -222,6 +225,7 @@ pub enum Arg {
     Unknown, // Range source
     Reference(usize), // Index into {args} pointing to an 'Arg::Output'
     Stdin,
+    Assign,
     // @TODO: Check if this has to be different from Arg::Stdin
     //        I expect this to catch ". cite" expressions
     PipedStdin,
@@ -234,6 +238,7 @@ enum SexprType {
     Char(char), // Index into {data} array
     Ident,
     Stdin,
+    Assign,
     Pipe,
     PipedStdin,
     Reference(usize), // Id that should match {Sexpr.out}
@@ -279,67 +284,74 @@ impl Fsm {
     }
 
     fn drain_push_sexpr(&mut self, cell_id: usize) -> Token<SexprType> {
+        fn parse_push_s_args(args: &mut Vec<Token<Arg>>, parameters: Drain<Token<SexprType>>) {
+            for p in parameters {
+                //debug_print_token!(p, debug_source);
+                match p.me {
+                    SexprType::Str => args.push(p.remap(Arg::Str)),
+                    SexprType::Char(c) => args.push(p.remap(Arg::Char(c))),
+                    SexprType::Assign => args.push(p.remap(Arg::Assign)),
+                    SexprType::Ident => args.push(p.remap(Arg::Unknown)),
+                    SexprType::Stdin => args.push(p.remap(Arg::Stdin)),
+                    SexprType::PipedStdin => args.push(p.remap(Arg::PipedStdin)),
+                    SexprType::Pipe => args.push(p.remap(Arg::Pipe)),
+                    SexprType::Reference(x) => args.push(p.remap(Arg::Reference(x))),
+                    SexprType::NewFunction => {} // Skip
+                }
+            }
+
+        }
         //for a in &self.buffer {
         //    println!(".-> {:?}", a);
         //}
         let parameter_start = self
             .buffer
             .iter()
-            .rposition(|p| matches!(p.me, SexprType::NewFunction))
+            .rposition(|t| matches!(t.me, SexprType::NewFunction))
             .unwrap_or(0);
-        let parameters = self.buffer.drain(parameter_start..);
         //let mut is_piped = false;
 
-        for p in parameters {
-            //debug_print_token!(p, debug_source);
-            match p.me {
-                SexprType::Str => self.args.push(p.remap(Arg::Str)),
-                SexprType::Char(c) => self.args.push(p.remap(Arg::Char(c))),
-                SexprType::Ident => self.args.push(p.remap(Arg::Unknown)),
-                SexprType::Stdin => self.args.push(p.remap(Arg::Stdin)),
-                SexprType::PipedStdin => self.args.push(p.remap(Arg::PipedStdin)),
-                SexprType::Pipe => self.args.push(p.remap(Arg::Pipe)),
-                SexprType::Reference(x) => self.args.push(p.remap(Arg::Reference(x))),
-                SexprType::NewFunction => {} // Skip
-            }
+        let mut output_id = self.output.len();
+
+
+        // Break up a long statement into its individual s-exprs
+        //
+        // This is where we would do pratt parsing for order of operations
+        // but there is only one in-fix operator, '=' in the language
+        while let Some(i) = self.buffer[parameter_start..].iter().rposition(|t| matches!(t.me, SexprType::Assign)) {
+            parse_push_s_args(&mut self.args, self.buffer.drain(parameter_start + i + 1..));
+            self.output.push(Sexpr {
+                cell_id,
+                args: self.args_cursor.move_to(self.args.len()),
+                out: output_id,
+            });
+
+            self.args.push(self.buffer.pop().unwrap().remap(Arg::Assign));
+            self.buffer.push(Token::new(SexprType::Reference(output_id), Source::Range(0, 0)));
+            // Push assign off for next s-expr because for `a = b + 1`, we
+            // want `b + 1` then `a = <result>`
+            output_id += 1;
+
         }
 
-        let args_post_index = self.args.len();
-        let sexpr_index = self.output.len();
-        let sexpr = Sexpr {
+        // The simple case of determing args_range would be to just calculate
+        // `self.args.len()` before and after `parse_push_s_args()`
+        parse_push_s_args(&mut self.args, self.buffer.drain(parameter_start..));
+        // But {self.args_cursor} allows us to push the first {Arg::Stdin} when
+        // initialising the {fsm} and the {Arg::Assign} in above while-loop out
+        // in a different order
+
+        self.output.push(Sexpr {
             cell_id,
-            args: self.args_cursor.move_to(args_post_index),
-            out: sexpr_index,
-        };
+            args: self.args_cursor.move_to(self.args.len()),
+            out: output_id,
+        });
         //self.args.push(Token::new(Arg::Output, Source::Range(0, 0)));
-        self.args_cursor.move_to(args_post_index);
-
-        self.output.push(sexpr);
-
-        //for a in &self.buffer {
-        //    println!("- {:?}", a);
-        //}
-        // @TODO: range of all args?
-        Token::new(SexprType::Reference(sexpr_index), Source::Range(0, 0))
+        Token::new(SexprType::Reference(output_id), Source::Range(0, 0))
     }
-
-    //fn print_command(&self, cmd: &Sexpr, debug_source: &str) {
-    //    print!("Command: (");
-    //    for arg in &self.args[cmd.0.0..cmd.0.1] {
-    //        match arg {
-    //            Arg::Str(s) => print!("{:?}", s.to_str(debug_source)),
-    //            Arg::Char(c, _) => print!("{:?}", c),
-    //            Arg::Unknown(s) => print!("{{{}}}", s.to_str(debug_source)),
-    //            Arg::Stdin => print!("."),
-    //            Arg::PipedStdin => print!(".>"),
-    //            Arg::Reference(i) => print!("{{{}}}", i),
-    //            Arg::Pipe => print!(" |> "),
-    //        }
-    //        print!(", ");
-    //    }
-    //    println!(");");
-    //}
 }
+
+use std::vec::Drain;
 
 // {cell_id} increments everytime we arrive a the head or body, i.e. the head
 //  and body differ in id by 1
@@ -367,6 +379,7 @@ impl Token<Arg> {
         match self.me {
             Arg::Str => format!("{:?}", self.to_str(source)),
             Arg::Char(c) => format!("{:?}", c),
+            Arg::Assign => '='.to_string(),
             // This is either a variable or function identifier
             Arg::Unknown => self.to_str(source).to_string(),
             Arg::Stdin => '.'.to_string(),

@@ -37,7 +37,7 @@ mod tests {
     const FILE: &str = r#"
 :title: Hello
 {# Comment #}
-:bibliography: {$ env "BIBLIOGRAPHY" $}
+:bibliography: {$ hello = env "yo"; env "BIBLIOGRAPHY" $}
 {# | test_pipe  #}
 
 {| run "graphviz" hello | prettify . ; env . |}
@@ -53,7 +53,7 @@ Some text
 
 {$ "This is a quote that\nshould be included" $}
 
-{| if(nottrue) |}
+{| if(hello) |}
 Come to the dark side of the moon
 {| endif |}
 
@@ -71,10 +71,10 @@ Final stuff
         //    .iter()
         //    .enumerate()
         //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
-        let (ast, args) = log(FILE, ast::process(&sexprs, &args, FILE));
-        //ast.iter()
-        //    .enumerate()
-        //    .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
+        let (ast, args) = log(FILE, ast::process(&sexprs, &args));
+        ast.iter()
+            .enumerate()
+            .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
         log(FILE, run::run(&ast, &args, &_function_list, FILE));
     }
 
