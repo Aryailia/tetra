@@ -40,6 +40,7 @@ pub enum LexType {
 
     // Expression-level stuff
     Ident,
+    IdentParen,
     Pipe,
     ParenStart,
     ParenClose,
@@ -339,10 +340,17 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
                 !is_invalid_second_ident_char(ch),
                 "First char of idents should also satisfy second+ char requirements"
             );
-            let amount = walker.original[curr..]
+            let ident_len = walker.original[curr..]
                 .find(is_invalid_second_ident_char)
                 .unwrap_or(0);
-            (LexType::Ident, amount, false)
+            let peek_post = walker.post + ident_len;
+            if &walker.original[walker.curr + ident_len..peek_post] == "(" {
+                (LexType::IdentParen, ident_len + len_utf8!('(' => 1), false)
+            } else {
+                (LexType::Ident, ident_len, false)
+            }
+
+
         }
         (CodeMode::Regular, '|') => (LexType::Pipe, len_utf8!('|' => 1), false),
         (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
@@ -509,7 +517,13 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
 
             LexType::Ident => {
                 assert!(text.find(is_invalid_second_ident_char).is_none());
-                buffer.push_str(text)
+                buffer.push_str(text);
+            }
+            LexType::IdentParen => {
+                let penultimate_post = text.len() - len_utf8!('(' => 1);
+                assert!(text[..penultimate_post].find(is_invalid_second_ident_char).is_none());
+                assert_eq!("(", &text[penultimate_post..]);
+                buffer.push_str(text);
             }
             LexType::Pipe => push_check!(buffer '|' if text == "|"),
             LexType::ParenStart => push_check!(buffer '(' if text == "("),

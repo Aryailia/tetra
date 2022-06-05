@@ -50,6 +50,7 @@ pub fn run<'a>(
     ctx.register_stateless_function("end", &pass);
     ctx.register_stateless_function("if", &concat);
     ctx.register_stateless_function("endif", &concat);
+    ctx.register_stateless_function("cite", &concat);
     println!("{:?}", ctx.definitions.get("pass").unwrap().call(&[]));
     println!("====start====");
 
@@ -75,7 +76,7 @@ pub fn run<'a>(
             let binding = match arg.me {
                 Arg::Str => Value::Str(arg.to_str(original)),
                 Arg::Char(c) => Value::Char(c),
-                Arg::Unknown => {
+                Arg::Ident => {
                     // Function (with no arguments) or variable retrieval
                     let name = arg.source.to_str(original);
                     // Run a command
@@ -93,6 +94,7 @@ pub fn run<'a>(
                         continue;
                     }
                 }
+                Arg::IdentFunc => unreachable!(),
                 Arg::Assign => unreachable!(),
                 Arg::Reference(i) => {
                     if storage.len() == i {
@@ -111,7 +113,7 @@ pub fn run<'a>(
         match &cmd.label {
             Label::Assign(_) => {
                 let lvalue = &args[cmd.args.0];
-                debug_assert!(matches!(lvalue.me, Arg::Unknown), "{:?}", lvalue);
+                debug_assert!(matches!(lvalue.me, Arg::Ident), "{:?}", lvalue);
                 debug_assert_eq!(binded_args.len(), 2);
                 let id = Id::Ident(lvalue.source.to_str(original));
                 // @TODO: Should this be cloned?
@@ -119,23 +121,20 @@ pub fn run<'a>(
                 storage.push(Value::Str(""));
             }
             Label::Ident(s) => {
-                if let Some(func) = ctx.definitions.get(s.to_str(original)) {
-                    storage.push(func.call(&binded_args[start..binded_args.len()]));
+                let name = s.to_str(original);
+                let close = binded_args.len();
+                if start == close && let Some(var) = ctx.bindings.get(&Id::Ident(name)) {
+                    storage.push(var.clone())
+                } else if let Some(func) = ctx.definitions.get(name) {
+                    storage.push(func.call(&binded_args[start..close]))
                 } else {
-                    return Err(Token::new("No function named this.", s.clone()));
+                    Err(Token::new("No function or variable named this.", s.clone()))?;
                 }
             }
             Label::Display => {
                 storage.push(concat(&binded_args[start..binded_args.len()]));
             }
         }
-        //if let Some(label) = cmd.label.as_ref().map(|s| s.to_str(source)) {
-        //    //storage.push(Value::Str(label));
-        //    i
-        //    storage.push(concat(&binded_args[start..binded_args.len()]));
-        //} else {
-        //    storage.push(concat(&binded_args[start..binded_args.len()]));
-        //}
     }
 
     //let mut storage: Vec<String> = Vec::with_capacity(ast.len());

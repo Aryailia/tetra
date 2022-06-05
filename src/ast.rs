@@ -13,6 +13,7 @@ pub struct Command {
 }
 
 pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput, ParseError> {
+    //////////////////////////////////////////////////////////////////////////////
     // Reorder so that the HereDoc headers appear after their bodies
     let mut sorted_exprs: Vec<Sexpr> = Vec::new();
     let mut stdin_refs: Vec<usize> = Vec::new();
@@ -38,6 +39,7 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         stdin_refs.push(0);
     }
 
+    //////////////////////////////////////////////////////////////////////////////
     // Reorder the arguments due to piping
     let mut resolved_args: Vec<Token<Arg>> = Vec::new();
     {
@@ -97,11 +99,12 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
                             } else {
                                 return Err(Token::new("ast.rs: Unexpected second argument to for assign", buffer[3].source.clone()));
                             }
-                        } else if !matches!(unprocessed_args[1].me, Arg::Unknown) {
+                        } else if !matches!(unprocessed_args[1].me, Arg::Ident) {
                             return Err(Token::new("ast.rs: The l-value of the assign should be an ident", buffer[1].source.clone()));
                         }
                     }
                     (_, Arg::Assign) => return Err(Token::new("ast.rs: There correct syntax for variable assignments is:\n    '<l-value> = <r-value>'", arg.source.clone())),
+
                     _ => {}
                 }
             }
@@ -111,6 +114,10 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
             resolved_args.extend(
                 unprocessed_args[start..]
                     .iter()
+                    //.map(|arg| {
+                    //    println!("{:?}", arg.to_display(debug_source));
+                    //    arg
+                    //})
                     .filter_map(|arg| match arg.me {
                         Arg::Pipe => unreachable!(),
                         Arg::PipedStdin => unreachable!(),
@@ -119,8 +126,8 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
                         }
                         Arg::Assign => Some(arg.clone()),
                         Arg::Str | Arg::Char(_) | Arg::Reference(_) => Some(arg.clone()),
-                        Arg::Unknown => Some(arg.clone()),
-                    }),
+                        Arg::Ident | Arg::IdentFunc => Some(arg.clone()),
+                    })
             );
             resolved_args.append(&mut buffer);
             exp.args = (index, resolved_args.len());
@@ -190,6 +197,7 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
     }
 
     ////////////////////////////////////////////////////////////////////////////
+    // Parse {resolved_args} and {sorted_exprs} into a Vec<Command> and {resolved_args}
     let mut output = Vec::with_capacity(sorted_exprs.len());
     output.extend(sorted_exprs.iter().map(|exp| {
         let len = exp.args.1 - exp.args.0;
@@ -197,7 +205,7 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
             .then(|| {
                 let first_arg = &resolved_args[exp.args.0];
                 match first_arg.me {
-                    Arg::Unknown => (Label::Ident(first_arg.source.clone()), 1),
+                    Arg::Ident | Arg::IdentFunc => (Label::Ident(first_arg.source.clone()), 1),
                     Arg::Assign => (Label::Assign(first_arg.source.clone()), 1),
                     _ => (Label::Display, 0),
                 }

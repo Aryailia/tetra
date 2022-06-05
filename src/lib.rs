@@ -1,6 +1,7 @@
 //run: cargo test -- --nocapture
 
 #![allow(dead_code)]
+#![feature(let_chains)]
 
 #[macro_use]
 mod framework;
@@ -55,7 +56,7 @@ Some text
 
 {| if(hello) |}
 Come to the dark side of the moon
-{| endif |}
+{| endif; cite(cite hello) |}
 
 Final stuff
 "#;
@@ -72,9 +73,9 @@ Final stuff
         //    .enumerate()
         //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
         let (ast, args) = log(FILE, ast::process(&sexprs, &args));
-        ast.iter()
-            .enumerate()
-            .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
+        //ast.iter()
+        //    .enumerate()
+        //    .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
         log(FILE, run::run(&ast, &args, &_function_list, FILE));
     }
 
