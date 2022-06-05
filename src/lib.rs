@@ -5,11 +5,10 @@
 
 #[macro_use]
 mod framework;
-mod ast;
 mod errors;
-mod lexer;
-mod sexpr;
 mod run;
+mod parser;
+
 
 //use std::fmt::Debug;
 //
@@ -31,9 +30,11 @@ mod run;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use framework::{self, Token};
     use std::fmt::Debug;
+
+    use super::*;
+    use parser::{lexer, sexpr, ast};
+    use framework::{self, Token};
 
     const FILE: &str = r#"
 :title: Hello
@@ -60,6 +61,7 @@ Come to the dark side of the moon
 
 Final stuff
 "#;
+
 
     #[test]
     #[allow(dead_code)]

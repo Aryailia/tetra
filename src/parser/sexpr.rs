@@ -8,7 +8,7 @@
 // final order of the arguments quite yet.
 
 use crate::framework::{Source, Token};
-use crate::lexer::LexType;
+use super::lexer::LexType;
 
 pub type ParseOutput = (Vec<Sexpr>, Vec<Token<Arg>>);
 pub type ParseError = Token<&'static str>;

@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::ast::{Command, Label};
+use crate::parser::sexpr::Arg;
+use crate::parser::ast::{Command, Label};
 use crate::framework::{Source, Token};
-use crate::sexpr::Arg;
 
 #[derive(Clone, Debug)]
 pub enum Value<'source, CustomValue> {
@@ -94,6 +94,8 @@ pub fn run<'a>(
                         continue;
                     }
                 }
+                // sexpr and ast parsing steps should have moved these to only
+                // appear as {{Command}.label}
                 Arg::IdentFunc => unreachable!(),
                 Arg::Assign => unreachable!(),
                 Arg::Reference(i) => {
