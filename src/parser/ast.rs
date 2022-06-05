@@ -1,7 +1,11 @@
 //run: cargo test -- --nocapture
 
-use crate::framework::{Source, Token};
+// Second pass over the s-exprs to format them into runnable commands
+// Removes the superfluous redirections, resolves what Stdin references,
+// and removes gaps.
+
 use super::sexpr::{Arg, Sexpr};
+use crate::framework::{Source, Token};
 
 pub type ParseOutput = (Vec<Command>, Vec<Token<Arg>>);
 pub type ParseError = Token<&'static str>;
@@ -13,7 +17,7 @@ pub struct Command {
 }
 
 pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput, ParseError> {
-    //////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////
     // Reorder so that the HereDoc headers appear after their bodies
     let mut sorted_exprs: Vec<Sexpr> = Vec::new();
     let mut stdin_refs: Vec<usize> = Vec::new();
@@ -39,119 +43,41 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         stdin_refs.push(0);
     }
 
-    //////////////////////////////////////////////////////////////////////////////
-    // Reorder the arguments due to piping
-    let mut resolved_args: Vec<Token<Arg>> = Vec::new();
+    ////////////////////////////////////////////////////////////////////////////
+    // Resolve 'Arg::Stdin' to a 'Arg::Reference(_)' and syntax check
+    let mut resolved_args = Vec::with_capacity(arg_defs.len());
     {
-        // Because we are reordering, {buffer} holds values to be pushed after
-        let mut buffer = Vec::new();
-
         for exp in &mut sorted_exprs {
-            //println!("{}", exp.to_display(arg_defs, debug_source));
-            let index = resolved_args.len();
-            let unprocessed_args = &arg_defs[exp.args.0..exp.args.1];
-
-            // Syntax check
-            let mut start = 0;
             let output_id = stdin_refs[exp.cell_id / 2];
 
-            // Handle the re-ordering:
-            // The possibilities are:
-            // - (value/ident, pipe, ...) three or more arguments
-            // - (pipedstdin) or (pipestdin, ...) one or more arguments
-            // - (ident, =, value/ident)
-            //
-            // After re-arranging the argument order, the possibilities are:
-            // - (no idents, no idents, ...) one or more arguments
-            // - (ident, anything, anything)
-            // - (=, ident, value/ident)
-            for (i, arg) in unprocessed_args.iter().enumerate().rev() {
-                match (i, &arg.me) {
-                    //(0, 1) => {}
-                    // Move "a | b" to "b a"
-                    (1, Arg::Pipe) => {
-                        if unprocessed_args.len() < 3 {
-                            let pipe = unprocessed_args
-                                .iter()
-                                .find(|a| matches!(a.me, Arg::Pipe))
-                                .unwrap();
-                            return Err(Token::new("blah", pipe.source.clone()));
-                        } else {
-                            buffer.push(unprocessed_args[0].clone());
-                            start = 2;
-                        }
-                    }
-                    (_, Arg::Pipe) => return Err(Token::new("ast.rs: Missing a value before the pipe to pass to the next command.", arg.source.clone())),
-                    (0, Arg::PipedStdin) => {
-                        buffer.push(Token::new(
-                            Arg::Reference(output_id),
-                            unprocessed_args[0].source.clone(),
-                        ));
-                        start = 1;
-                    }
-                    (_, Arg::PipedStdin) => unreachable!("{}", file!()),
-                    (0, Arg::Assign) => {
-                        // Arg::Assign is already in the label location and not
-                        // in order as is all the other sexpr tokens
-                        if unprocessed_args.len() != 3 {
-                            if unprocessed_args.len() < 3 {
-                                return Err(Token::new("ast.rs: This assign is missing an r-value", arg.source.clone()));
-                            } else {
-                                return Err(Token::new("ast.rs: Unexpected second argument to for assign", buffer[3].source.clone()));
-                            }
-                        } else if !matches!(unprocessed_args[1].me, Arg::Ident) {
-                            return Err(Token::new("ast.rs: The l-value of the assign should be an ident", buffer[1].source.clone()));
-                        }
-                    }
-                    (_, Arg::Assign) => return Err(Token::new("ast.rs: There correct syntax for variable assignments is:\n    '<l-value> = <r-value>'", arg.source.clone())),
-
-                    _ => {}
+            let start = resolved_args.len();
+            let parameters = &arg_defs[exp.args.0..exp.args.1];
+            for (i, arg) in parameters.iter().enumerate() {
+                resolved_args.push(match arg.me {
+                    Arg::Stdin => arg.remap(Arg::Reference(output_id)),
+                    // These branches made impossible by sexpr.rs parse step
+                    Arg::Assign | Arg::IdentFunc if i >= 1 => unreachable!(),
+                    Arg::Ident if i >= 2 => unreachable!(),
+                    _ => arg.clone(),
+                });
+                if i == 1 && matches!(arg.me, Arg::Ident) {
+                    debug_assert_eq!(parameters[0].me, Arg::Assign);
                 }
             }
-
-            // Exhaustively enumerate so that we update this if we change
-            // how the sexpr parser works
-            resolved_args.extend(
-                unprocessed_args[start..]
-                    .iter()
-                    //.map(|arg| {
-                    //    println!("{:?}", arg.to_display(debug_source));
-                    //    arg
-                    //})
-                    .filter_map(|arg| match arg.me {
-                        Arg::Pipe => unreachable!(),
-                        Arg::PipedStdin => unreachable!(),
-                        Arg::Stdin => {
-                            Some(Token::new(Arg::Reference(output_id), arg.source.clone()))
-                        }
-                        Arg::Assign => Some(arg.clone()),
-                        Arg::Str | Arg::Char(_) | Arg::Reference(_) => Some(arg.clone()),
-                        Arg::Ident | Arg::IdentFunc => Some(arg.clone()),
-                    })
-            );
-            resolved_args.append(&mut buffer);
-            exp.args = (index, resolved_args.len());
+            exp.args = (start, resolved_args.len());
         }
     }
 
-    //////////////////////////////////////////////////////////////////////////////
-    //// Optimisation step, remove any single command
+    ////////////////////////////////////////////////////////////////////////////
+    // Optimisation step, remove any single command
     // @TODO: change this to not be O(n^2) if possible
-
-    // Map ids of the output of each s-expr to their indicies in {sorted_exprs}
-    //let mut output_indices = vec![0; sorted_exprs[sorted_exprs.len() - 1].out + 1];
-    //for (i, exp) in sorted_exprs.iter().enumerate() {
-    //    output_indices[exp.out] = i;
-    //}
-
-    //let mut output = Vec::with_capacity(sorted_exprs.len());
     {
         sorted_exprs.retain(|exp| {
             let first_index = exp.args.0;
             let len = exp.args.1 - first_index;
             if len == 1 {
                 match resolved_args[first_index].me {
-                    // If a literal, replace all Arg::Reference with the literal
+                    // Replace a pointer to a literal with just the literal
                     Arg::Str | Arg::Char(_) => {
                         let (first, args) = resolved_args[first_index..].split_at_mut(1);
                         let first_arg = &first[0];
@@ -164,6 +90,9 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
                         });
                         false
                     }
+
+                    // Replace double pointers with a direct pointer
+                    // e.g. `{1} -> {2} -> {3}` replaced with `{1} -> {3}`
                     Arg::Reference(old_i) => {
                         resolved_args[first_index + 1..].iter_mut().for_each(|arg| {
                             if let Arg::Reference(i) = arg.me {
@@ -183,24 +112,23 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
     }
 
     ////////////////////////////////////////////////////////////////////////////
+    // Parse {resolved_args} and {sorted_exprs} into a Vec<Command> and {resolved_args}
+    //
     // Map ids of the output of each s-expr to their indices in {sorted_exprs}
-    let mut output_indices = vec![0; sorted_exprs[sorted_exprs.len() - 1].out + 1];
-    for (i, exp) in sorted_exprs.iter_mut().enumerate() {
+    // for use in changing 'Arg::Reference(<id>)' to 'Arg::Reference(<index>)'
+    // in the final loop
+    let mut output_indices = vec![0; sexprs.len()];
+    for (i, exp) in sorted_exprs.iter().enumerate() {
         output_indices[exp.out] = i;
-        exp.out = i; // Do not need {Sexp.out} anymore as everything is sorted
-    }
-    // And remap all the {Arg::Reference()}s to their new indices
-    for arg in resolved_args.iter_mut() {
-        if let Arg::Reference(i) = arg.me {
-            arg.me = Arg::Reference(output_indices[i]);
-        }
     }
 
-    ////////////////////////////////////////////////////////////////////////////
-    // Parse {resolved_args} and {sorted_exprs} into a Vec<Command> and {resolved_args}
+    // Build final result array
     let mut output = Vec::with_capacity(sorted_exprs.len());
-    output.extend(sorted_exprs.iter().map(|exp| {
+    let mut gapless_args = Vec::with_capacity(arg_defs.len());
+    for exp in &sorted_exprs {
         let len = exp.args.1 - exp.args.0;
+
+        // Discriminate label from parameters
         let (label, skip) = (len > 0)
             .then(|| {
                 let first_arg = &resolved_args[exp.args.0];
@@ -211,14 +139,23 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
                 }
             })
             .unwrap_or((Label::Display, 0));
-        Command {
-            label,
-            args: (exp.args.0 + skip, exp.args.1),
-        }
-    }));
 
-    // @TODO: Trim the {resolved_args} via retain?
-    Ok((output, resolved_args))
+        // Build {gapless_args} by removing the gaps in {resolved_args}
+        let new_start = gapless_args.len();
+        for a in &resolved_args[exp.args.0 + skip..exp.args.1] {
+            match a.me {
+                // Change from 'Reference(<id>)' to 'Reference(<index into {output}>)'
+                Arg::Reference(i) => gapless_args.push(a.remap(Arg::Reference(output_indices[i]))),
+                _ => gapless_args.push(a.clone()),
+            }
+        }
+        output.push(Command {
+            label,
+            args: (new_start, gapless_args.len()),
+        })
+    }
+
+    Ok((output, gapless_args))
     //Err(Token::new("Finished parsing", Source::Range(0, 0)))
 }
 
@@ -235,7 +172,7 @@ impl Command {
         let mut display = String::new();
         display.push_str(match &self.label {
             Label::Assign(_) => "=",
-            Label::Display => "Display",
+            Label::Display => "Concat",
             Label::Ident(s) => s.to_str(source),
         });
         display.push('(');

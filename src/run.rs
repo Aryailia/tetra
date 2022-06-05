@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::parser::sexpr::Arg;
-use crate::parser::ast::{Command, Label};
 use crate::framework::{Source, Token};
+use crate::parser::ast::{Command, Label};
+use crate::parser::sexpr::Arg;
 
 #[derive(Clone, Debug)]
 pub enum Value<'source, CustomValue> {
@@ -106,9 +106,7 @@ pub fn run<'a>(
                     }
                     storage[i].clone()
                 }
-                Arg::Stdin => unreachable!(),
-                Arg::PipedStdin => unreachable!(),
-                Arg::Pipe => unreachable!(),
+                Arg::Stdin => unreachable!(), // Removed in ast.rs parsing
             };
             binded_args.push(binding);
         }
@@ -130,7 +128,7 @@ pub fn run<'a>(
                 } else if let Some(func) = ctx.definitions.get(name) {
                     storage.push(func.call(&binded_args[start..close]))
                 } else {
-                    Err(Token::new("No function or variable named this.", s.clone()))?;
+                    return Err(Token::new("No function or variable named this.", s.clone()));
                 }
             }
             Label::Display => {
