@@ -118,7 +118,12 @@ pub fn run<'a>(
                 let id = Id::Ident(lvalue.source.to_str(original));
                 // @TODO: Should this be cloned?
                 ctx.bindings.insert(id, binded_args[0].clone());
-                storage.push(Value::Str(""));
+                storage.push(Value::Str("")); // We index into {storage}
+                //if cmd.provides_for.1 - cmd.provides_for.0 == 0 {
+                //    storage.push(Value::Str(""));
+                //} else {
+                //    storage.push(binded_args[0]);
+                //}
             }
             Label::Ident(s) => {
                 let name = s.to_str(original);

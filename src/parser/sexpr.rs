@@ -2,7 +2,16 @@
 
 // This decides the grouping of lexemes into commands as well as breaking up
 // multi-statement commands into single commands.
-// e.g. `a = b = c` -> `b = c` and `a = <output>`
+//     e.g. '{$ a = b = c $}' -> 'b = c' and 'a = <output>'
+//
+// Idents are pushed out to their own s-expr,
+//     e.g. '{| cite(1, len, 3) |}' -> `(len)` and `(cite, 1, <ref-to-len>, 3)`
+//          as oppose to  `(cite, len)`
+// This is because we do not know if 'len' is a variable or a function ident.
+// This means in general we have too many s-expr emitted, but we cannot resolve
+// this ambiguity until we know the function list or execute variable assigns.
+// And we do our best to optimise these extra s-exprs away in the ast.rs step.
+
 
 use super::lexer::LexType;
 use crate::framework::{Source, Token};
@@ -83,7 +92,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
     //// Can use indexing to access allocated nodes.
     ////assert_eq!(ast_nodes[three_id], AstNode::Const(3));
 
-    let mut fsm = Fsm::new(lexemes.len());
+    let mut fsm = Fsm::new(lexemes.len(), debug_source);
     //for l in lexemes {
     //    debug_print_token!(l, debug_source);
     //}
@@ -103,11 +112,10 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
         //debug_print_token!(l, debug_source);
         ////let stdin = 0;
         let source = l.source.clone();
-
         match (&fsm.mode, &l.me) {
             (Mode::Text, LexType::Text) => {
                 //println!("{:?}", l.to_str(debug_source));
-                buffer.push(Token::new(SexprType::Str, source));
+                buffer.push(l.remap(SexprType::Str));
             }
             (Mode::Text, LexType::BlockComment) => {} // Skip comments
             (Mode::Text, LexType::HereDocStart) => {
@@ -115,12 +123,15 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 let _output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
                 cell_id += 1;
 
-                // @TODO: Double check that we have to push SexprType::NewFunction
-                // We push SexprType::NewFunction for multiple commands in the
+                // @TODO: Double check that we have to push 'SexprType::NewFunction'
+                // We push 'SexprType::NewFunction' for multiple commands in the
                 // code body, e.g. "{| cite ''; print() |}"
 
-                buffer.clear(); // Not algorithmically necessary, but clears memory
-                buffer.push(Token::new(SexprType::NewFunction, source.clone()));
+                // 'LexType::HereDocStart' indicates the previous cell has
+                // fully outputted all its s-exprs so we can empty {buffer}
+                buffer.clear();
+                // Do not need to demarcate a new s-expr because we clear
+                //buffer.push(Token::new(SexprType::NewFunction, source));
                 buffer.push(Token::new(SexprType::PipedStdin, source));
             }
             (Mode::Text, LexType::InlineStart) => {
@@ -140,6 +151,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             }
             (Mode::Code, LexType::IdentParen) => {
                 buffer.push(Token::new(SexprType::IdentFunc, source));
+                //fsm.stack.push(buffer.len());
             }
             (Mode::Code, LexType::Pipe) => {
                 let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
@@ -185,10 +197,13 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                     .iter()
                     .rposition(|t| matches!(t.me, SexprType::IdentFunc))
                     .unwrap();
-                // Push the interior of the parenthesis
+
+                // Push the interior of the parenthesis if not empty
                 // e.g. `cite(ref 1)` -> push `ref 1`
-                let output_token = fsm.drain_push_sexpr(buffer, cell_id, i + 1)?;
-                buffer.push(output_token);
+                if i + 1 < buffer.len() {
+                    let output_token = fsm.drain_push_sexpr(buffer, cell_id, i + 1)?;
+                    buffer.push(output_token);
+                }
 
                 // If there was a pipe then process normally
                 if matches!(buffer[i - 1].me, SexprType::Pipe | SexprType::PipedStdin) {
@@ -205,6 +220,10 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             }
             (Mode::Code, LexType::Assign) => {
                 buffer.push(Token::new(SexprType::Assign, source));
+            }
+            (Mode::Code, LexType::ArgSeparator) => {
+                buffer.push(l.remap(SexprType::ArgSeparator));
+                //buffer.push
             }
             (Mode::Code, _) => return Err(Token::new("Sexpr.rs: Unhandled token", source)),
             //(Mode::Code, _) => debug_print_token!(die@l, debug_source),
@@ -274,6 +293,9 @@ enum SexprType {
     IdentFunc,
     Stdin,
     Assign,
+
+    ArgSeparator,
+
     Pipe,
     PipedStdin,
     Reference(usize), // Id that should match {Sexpr.out}
@@ -296,11 +318,12 @@ struct Fsm {
     args_stdin_index: usize,
 
     stdin_range: (usize, usize),
-    //stack: Vec<usize>, // @TODO: for paraenthesis and bracket balancing
+    stack: Vec<usize>, // @TODO: for paraenthesis and bracket balancing
+    debug_source: String,
 }
 
 impl Fsm {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, debug_source: &str) -> Self {
         // Parsing into sexpr will never produce more than the number of lexemes
         // as we never push
         Self {
@@ -312,7 +335,8 @@ impl Fsm {
             args_stdin_index: 0,
 
             stdin_range: (0, 0),
-            //stack: Vec::new(),
+            stack: Vec::with_capacity(capacity),
+            debug_source: debug_source.to_string(),
         }
     }
 
@@ -344,6 +368,8 @@ impl Fsm {
                 .unwrap_or(0);
 
         // Break up a long statement into its individual s-exprs
+        // Currently, we can only construct multi-expression commands with
+        // the inline operators, of which, there is only the assign operator.
         //
         // This is where we would do pratt parsing for order of operations
         // but there is only one in-fix operator, '=' in the language
@@ -352,50 +378,23 @@ impl Fsm {
             .iter()
             .rposition(|t| matches!(t.me, SexprType::Assign))
         {
-            self.parse_push_s_args(
-                cell_id,
-                &mut arg_buffer,
-                buffer.drain(parameter_start + i + 1..),
-            )?;
-
-            let output_id = self.output.len();
-            self.output.push(Sexpr {
-                cell_id,
-                args: self.args_cursor.move_to(self.args.len()),
-                out: output_id,
-            });
+            let (output_id, source) =
+                self.parse_push_s_args(cell_id, &mut arg_buffer, buffer, parameter_start + i + 1)?;
 
             // The while sentinel ensures this is an SexprType::Assign
             let assign = buffer.pop().unwrap();
             debug_assert!(matches!(assign.me, SexprType::Assign));
             self.args.push(assign.remap(Arg::Assign));
 
-            buffer.push(Token::new(
-                SexprType::Reference(output_id),
-                Source::Range(0, 0),
-            ));
+            buffer.push(Token::new(SexprType::Reference(output_id), source));
             // Push assign off for next s-expr because for `a = b + 1`, we
             // want `b + 1` then `a = <result>`
         }
 
-        // The simple case of determing args_range would be to just calculate
-        // `self.args.len()` before and after `parse_push_s_args()`
-        self.parse_push_s_args(cell_id, &mut arg_buffer, buffer.drain(parameter_start..))?;
-        // But {self.args_cursor} allows us to push the first {Arg::Stdin} when
-        // initialising the {fsm} and the {Arg::Assign} in above while-loop out
-        // in a different order
-
-        let output_id = self.output.len();
-        self.output.push(Sexpr {
-            cell_id,
-            args: self.args_cursor.move_to(self.args.len()),
-            out: output_id,
-        });
+        let (output_id, source) =
+            self.parse_push_s_args(cell_id, &mut arg_buffer, buffer, parameter_start)?;
         //self.args.push(Token::new(Arg::Output, Source::Range(0, 0)));
-        Ok(Token::new(
-            SexprType::Reference(output_id),
-            Source::Range(0, 0),
-        ))
+        Ok(Token::new(SexprType::Reference(output_id), source))
     }
 
     // To be used by `parse_push_s_args()`
@@ -414,17 +413,89 @@ impl Fsm {
         // So that single-argument idents can be pushed before
         // the current command, so that {self.args_cursor} tracks properly
         buffer: &mut Vec<Token<Arg>>,
-        parameters: Drain<Token<SexprType>>,
-    ) -> Result<(), ParseError> {
+        params: &mut Vec<Token<SexprType>>,
+        start: usize,
+    ) -> Result<(usize, Source), ParseError> {
+
+        let mut comma_after_first = false;
+        {
+            let mut first: Option<Arg> = None;
+            // {x} is the parameter index including the label but no including
+            // piped arguments as these are to be pushed to the end
+            // {y} is the same as {x} but tracks how many arguments since the
+            // last 'SexprType::ArgSeparator', i.e. since the last comma
+            let (mut x, mut y) = (0, 0);
+            for p in &params[start..] {
+                (x, y, first) = match p.me {
+                    SexprType::Str => (x + 1, y + 1, first.or(Some(Arg::Str))),
+                    SexprType::Char(_) => (x + 1, y + 1, first.or(Some(Arg::Str))),
+                    SexprType::Assign => unreachable!(),
+                    SexprType::ArgSeparator if x == 1 => {
+                        comma_after_first = true;
+                        // The only place {x} and {y} are different
+                        // This is because {y} is to count how many arguments
+                        // since the last 'SexprType::ArgSeparator'
+                        (x, 0, first)
+                    }
+                    SexprType::ArgSeparator => (x, 0, first),
+                    SexprType::Ident => (x + 1, y + 1, first.or(Some(Arg::Ident))),
+                    SexprType::IdentFunc => (x + 1, y + 1, first.or(Some(Arg::Ident))),
+                    SexprType::Stdin => (x + 1, y + 1, first),
+
+                    // 'SexprType::PipedStdin' and 'SexprType::Pipe'
+                    SexprType::PipedStdin if x == 0 => (0, 0, first),
+                    SexprType::PipedStdin => return Err(p.remap("sexpr.rs: asdf")),
+                    // Because our parent function `parse_push_s_args()`
+                    SexprType::Pipe if x == 1 => (0, 0, first),
+                    SexprType::Pipe => return Err(p.remap("sexpr.rs: aalskdjfalkdsjf")),
+                    SexprType::Reference(_) => (x + 1, y + 1, first),
+                    SexprType::NewFunction => (0, 0, first),
+                };
+
+                if y >= 3 && matches!(first, Some(Arg::Ident)) {
+                    return Err(p.remap("sexpr.rs: Need a comma to separate arguments"));
+                }
+            }
+        }
+
+        // Should be guarenteed from main `match` branching
+        debug_assert!(
+            1 >= params[start..]
+                .iter()
+                .filter(|p| matches!(p.me, SexprType::PipedStdin | SexprType::Pipe))
+                .count()
+        );
+
+        // Re-order piped values to push to the end, and push out any idents
+        // that are not labels as their own s-expr. The pushed out idents could
+        // be variable or function idents.
         let mut piped_arg = None;
-        for p in parameters {
-            //debug_print_token!(p, debug_source);
+        for p in params.drain(start..) {
+            //debug_print_token!(p, &self.debug_source);
+            //println!("{:?} {:?}", param_count, p);
+
             match p.me {
                 SexprType::Str => buffer.push(p.remap(Arg::Str)),
                 SexprType::Char(c) => buffer.push(p.remap(Arg::Char(c))),
                 SexprType::Assign => unreachable!(),
+                SexprType::ArgSeparator => {}
                 SexprType::Ident => {
-                    if !buffer.is_empty() {
+                    // '{| cite(<ident>, a) |}' vs `{| cite(<ident> a) |}`
+                    // one s-expr vs two s-exprs
+
+                    // If we are the first argument and there is no
+                    // {comma_after_first}, then the current {p} is the
+                    // label for the command that {params.drain(start..)} is
+                    if buffer.is_empty() && !comma_after_first {
+                        // @TODO: add function call if second argument is a
+                        //debug_assert_eq!(param_count, 1);
+
+                        buffer.push(p.remap(Arg::Ident));
+
+                    // Otherwise we are argument of a command whose label
+                    // is specified before the current {p}
+                    // e.g. '{| cite(cite(), 1) |}' where {p} is the second cite
+                    } else {
                         self.args.push(p.remap(Arg::Ident));
                         let output_id = self.output.len();
                         self.output.push(Sexpr {
@@ -433,12 +504,9 @@ impl Fsm {
                             out: output_id,
                         });
                         buffer.push(p.remap(Arg::Reference(output_id)));
-                    } else {
-                        buffer.push(p.remap(Arg::Ident));
                     }
                 }
-                // @TODO: Should we resolve unknowns (variable or function
-                //        idents) to function idents?
+
                 SexprType::IdentFunc => {
                     // Remove the paren at the end of the source
                     let new_source = match p.source {
@@ -447,26 +515,26 @@ impl Fsm {
                         }
                     };
 
-                    if !buffer.is_empty() {
-                        unreachable!()
-                    } else {
+                    if buffer.is_empty() {
                         buffer.push(Token::new(Arg::IdentFunc, new_source));
+                    } else {
+                        // We are always the label of a command, i.e.
+                        // we cannot be a variable ident
+                        unreachable!()
                     }
                 }
                 SexprType::Stdin => buffer.push(p.remap(Arg::Stdin)),
                 SexprType::PipedStdin if buffer.is_empty() => {
                     piped_arg = Some(p.remap(Arg::Stdin));
                 }
-                SexprType::PipedStdin => return Err(p.remap("sexpr.rs: asdf")),
-                //SexprType::Pipe => buffer.push(p.remap(Arg::Pipe)),
+                SexprType::PipedStdin => unreachable!(),
                 SexprType::Pipe if buffer.len() == 1 => {
                     piped_arg = buffer.pop();
-                    // @TODO: actually probably have to error correction
                     debug_assert!(piped_arg.is_some())
                 }
-                SexprType::Pipe => return Err(p.remap("sexpr.rs: aalskdjfalkdsjf")),
+                SexprType::Pipe => unreachable!(),
                 SexprType::Reference(x) => buffer.push(p.remap(Arg::Reference(x))),
-                SexprType::NewFunction => {} // Skip
+                SexprType::NewFunction => {}
             }
         }
         if let Some(arg) = piped_arg {
@@ -474,12 +542,41 @@ impl Fsm {
         }
         self.args.append(buffer);
 
+        let output_id = self.output.len();
+        // The simple case of determing args_range would be to just calculate
+        // `self.args.len()` before and after `parse_push_s_args()`
+        // But {self.args_cursor} allows us to push the first {Arg::Stdin} when
+        // initialising the {fsm} and the {Arg::Assign} in above while-loop out
+        // in a different order
+        let range = self.args_cursor.move_to(self.args.len());
+        let source = source_span(range, &self.args);
+        self.output.push(Sexpr {
+            cell_id,
+            args: range,
+            out: output_id,
+        });
+        Ok((output_id, source))
         //Err(Token::new("sexpr.rs: aalskdjfalkdsjf", Source::Range(0, 0)))
-        Ok(())
     }
 }
 
-use std::vec::Drain;
+fn source_span((start, close): (usize, usize), args: &[Token<Arg>]) -> Source {
+    let parameters = &args[start..close];
+    debug_assert!(!parameters.is_empty());
+    // Would only be empty if we push an s-expr with no arguments, which
+    // should not be possible. We already if-statement catch the
+    // 'LexType::IdentFunc' case, i.e. a case like '{$ cite() $}'
+
+    let source1 = match parameters.first().map(|p| &p.source) {
+        Some(Source::Range(a, _)) => *a,
+        _ => unreachable!(), // {parameters} guarenteed to not be empty
+    };
+    let source2 = match parameters.last().map(|p| &p.source) {
+        Some(Source::Range(_, b)) => *b,
+        _ => unreachable!(), // {parameters} guarenteed to not be empty
+    };
+    Source::Range(source1, source2)
+}
 
 // {cell_id} increments everytime we arrive a the head or body, i.e. the head
 //  and body differ in id by 1

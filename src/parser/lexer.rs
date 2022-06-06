@@ -34,7 +34,7 @@ pub enum LexType {
     InlineStart,
     InlineClose,
 
-    //ArgSeparator,
+    ArgSeparator,
     CmdSeparator,
     Assign,
 
@@ -356,6 +356,7 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
         (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
         (CodeMode::Regular, ')') => (LexType::ParenClose, len_utf8!('|' => 1), false),
         (CodeMode::Regular, '.') => (LexType::Stdin, len_utf8!('.' => 1), false),
+        (CodeMode::Regular, ',') => (LexType::ArgSeparator, len_utf8!(',' => 1), false),
         (CodeMode::Regular, ';') => (LexType::CmdSeparator, len_utf8!(';' => 1), false),
         (CodeMode::Regular, '=') => (LexType::Assign, len_utf8!('=' => 1), false),
         (CodeMode::Regular, '"') => {
@@ -510,7 +511,7 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
                 buffer.push_str(config.inline.1);
             }
 
-            //LexType::ArgSeparator => push_check!(buffer ',' if text == ","),
+            LexType::ArgSeparator => push_check!(buffer ',' if text == ","),
             LexType::CmdSeparator => push_check!(buffer ';' if text == ";"),
             LexType::Assign => push_check!(buffer '=' if text == "="),
 

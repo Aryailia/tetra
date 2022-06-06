@@ -125,6 +125,14 @@ impl<T> Token<T> {
     }
 }
 
+//trait FixedSizedVec<T> {
+//    fn bound_push(&mut self) {
+//
+//    }
+//}
+//
+//impl FixedSizedVec<T> in
+
 //#[test]
 //fn hello() {
 //    let file = ":title: Hello

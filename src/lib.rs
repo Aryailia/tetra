@@ -41,7 +41,7 @@ mod tests {
 :bibliography: {$ hello = env "yo"; env "BIBLIOGRAPHY" $}
 {# | test_pipe  #}
 
-{| run "graphviz" hello | prettify . ; env . |}
+{| run "graphviz", hello | prettify . ; env . |}
 digraph {
     A -> B
     A -> C
@@ -56,7 +56,7 @@ Some text
 
 {| if(hello) |}
 Come to the dark side of the moon
-{| endif; cite(cite hello) |}
+{| endif; cite(hello, hello, "a") |}
 
 Final stuff
 "#;
@@ -68,10 +68,10 @@ Final stuff
         let lexemes = log(FILE, lexer::process(FILE, true));
         //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(FILE)));
         let (sexprs, args) = log(FILE, sexpr::process(&lexemes, FILE));
-        //sexprs
-        //    .iter()
-        //    .enumerate()
-        //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
+        sexprs
+            .iter()
+            .enumerate()
+            .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
         let (ast, args, provides_for) = log(FILE, ast::process(&sexprs, &args));
         ast.iter().enumerate().for_each(|(i, t)| {
             println!(
