@@ -6,9 +6,8 @@
 #[macro_use]
 mod framework;
 mod errors;
-mod run;
 mod parser;
-
+mod run;
 
 //use std::fmt::Debug;
 //
@@ -33,8 +32,8 @@ mod tests {
     use std::fmt::Debug;
 
     use super::*;
-    use parser::{lexer, sexpr, ast};
     use framework::{self, Token};
+    use parser::{ast, lexer, sexpr};
 
     const FILE: &str = r#"
 :title: Hello
@@ -62,7 +61,6 @@ Come to the dark side of the moon
 Final stuff
 "#;
 
-
     #[test]
     #[allow(dead_code)]
     fn it_works() {
@@ -74,10 +72,15 @@ Final stuff
         //    .iter()
         //    .enumerate()
         //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
-        let (ast, args) = log(FILE, ast::process(&sexprs, &args));
-        //ast.iter()
-        //    .enumerate()
-        //    .for_each(|(i, t)| println!("{} -> {}", t.to_display(&args, FILE), i));
+        let (ast, args, provides_for) = log(FILE, ast::process(&sexprs, &args));
+        ast.iter().enumerate().for_each(|(i, t)| {
+            println!(
+                "{:?} | {} -> {}",
+                &provides_for[t.provides_for.0..t.provides_for.1],
+                t.to_display(&args, FILE),
+                i
+            )
+        });
         log(FILE, run::run(&ast, &args, &_function_list, FILE));
     }
 

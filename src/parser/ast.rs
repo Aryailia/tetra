@@ -7,13 +7,14 @@
 use super::sexpr::{Arg, Sexpr};
 use crate::framework::{Source, Token};
 
-pub type ParseOutput = (Vec<Command>, Vec<Token<Arg>>);
+pub type ParseOutput = (Vec<Command>, Vec<Token<Arg>>, Vec<usize>);
 pub type ParseError = Token<&'static str>;
 
 #[derive(Debug)]
 pub struct Command {
     pub label: Label,
     pub args: (usize, usize),
+    pub provides_for: (usize, usize),
 }
 
 pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput, ParseError> {
@@ -46,70 +47,66 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
     ////////////////////////////////////////////////////////////////////////////
     // Resolve 'Arg::Stdin' to a 'Arg::Reference(_)' and syntax check
     let mut resolved_args = Vec::with_capacity(arg_defs.len());
-    {
-        for exp in &mut sorted_exprs {
-            let output_id = stdin_refs[exp.cell_id / 2];
+    for exp in &mut sorted_exprs {
+        let output_id = stdin_refs[exp.cell_id / 2];
 
-            let start = resolved_args.len();
-            let parameters = &arg_defs[exp.args.0..exp.args.1];
-            for (i, arg) in parameters.iter().enumerate() {
-                resolved_args.push(match arg.me {
-                    Arg::Stdin => arg.remap(Arg::Reference(output_id)),
-                    // These branches made impossible by sexpr.rs parse step
-                    Arg::Assign | Arg::IdentFunc if i >= 1 => unreachable!(),
-                    Arg::Ident if i >= 2 => unreachable!(),
-                    _ => arg.clone(),
-                });
-                if i == 1 && matches!(arg.me, Arg::Ident) {
-                    debug_assert_eq!(parameters[0].me, Arg::Assign);
-                }
+        let start = resolved_args.len();
+        let parameters = &arg_defs[exp.args.0..exp.args.1];
+        for (i, arg) in parameters.iter().enumerate() {
+            resolved_args.push(match arg.me {
+                Arg::Stdin => arg.remap(Arg::Reference(output_id)),
+                // These branches made impossible by sexpr.rs parse step
+                Arg::Assign | Arg::IdentFunc if i >= 1 => unreachable!(),
+                Arg::Ident if i >= 2 => unreachable!(),
+                _ => arg.clone(),
+            });
+            if i == 1 && matches!(arg.me, Arg::Ident) {
+                debug_assert_eq!(parameters[0].me, Arg::Assign);
             }
-            exp.args = (start, resolved_args.len());
         }
+        exp.args = (start, resolved_args.len());
     }
 
     ////////////////////////////////////////////////////////////////////////////
     // Optimisation step, remove any single command
     // @TODO: change this to not be O(n^2) if possible
-    {
-        sorted_exprs.retain(|exp| {
-            let first_index = exp.args.0;
-            let len = exp.args.1 - first_index;
-            if len == 1 {
-                match resolved_args[first_index].me {
-                    // Replace a pointer to a literal with just the literal
-                    Arg::Str | Arg::Char(_) => {
-                        let (first, args) = resolved_args[first_index..].split_at_mut(1);
-                        let first_arg = &first[0];
-                        args.iter_mut().for_each(|arg| {
-                            if let Arg::Reference(i) = arg.me {
-                                if i == exp.out {
-                                    *arg = first_arg.clone();
-                                }
+    sorted_exprs.retain(|exp| {
+        let first_index = exp.args.0;
+        let len = exp.args.1 - first_index;
+        if len == 1 {
+            match resolved_args[first_index].me {
+                // Replace a pointer to a literal with just the literal
+                Arg::Str | Arg::Char(_) => {
+                    let (first, args) = resolved_args[first_index..].split_at_mut(1);
+                    let first_arg = &first[0];
+                    args.iter_mut().for_each(|arg| {
+                        if let Arg::Reference(i) = arg.me {
+                            if i == exp.out {
+                                *arg = first_arg.clone();
                             }
-                        });
-                        false
-                    }
-
-                    // Replace double pointers with a direct pointer
-                    // e.g. `{1} -> {2} -> {3}` replaced with `{1} -> {3}`
-                    Arg::Reference(old_i) => {
-                        resolved_args[first_index + 1..].iter_mut().for_each(|arg| {
-                            if let Arg::Reference(i) = arg.me {
-                                if i == exp.out {
-                                    arg.me = Arg::Reference(old_i);
-                                }
-                            }
-                        });
-                        false
-                    }
-                    _ => true,
+                        }
+                    });
+                    false
                 }
-            } else {
-                true
+
+                // Replace double pointers with a direct pointer
+                // e.g. `{1} -> {2} -> {3}` replaced with `{1} -> {3}`
+                Arg::Reference(old_i) => {
+                    resolved_args[first_index + 1..].iter_mut().for_each(|arg| {
+                        if let Arg::Reference(i) = arg.me {
+                            if i == exp.out {
+                                arg.me = Arg::Reference(old_i);
+                            }
+                        }
+                    });
+                    false
+                }
+                _ => true,
             }
-        });
-    }
+        } else {
+            true
+        }
+    });
 
     ////////////////////////////////////////////////////////////////////////////
     // Parse {resolved_args} and {sorted_exprs} into a Vec<Command> and {resolved_args}
@@ -125,7 +122,8 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
     // Build final result array
     let mut output = Vec::with_capacity(sorted_exprs.len());
     let mut gapless_args = Vec::with_capacity(arg_defs.len());
-    for exp in &sorted_exprs {
+    let mut dependencies = Vec::with_capacity(arg_defs.len());
+    for (i, exp) in sorted_exprs.iter().enumerate() {
         let len = exp.args.1 - exp.args.0;
 
         // Discriminate label from parameters
@@ -145,17 +143,38 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         for a in &resolved_args[exp.args.0 + skip..exp.args.1] {
             match a.me {
                 // Change from 'Reference(<id>)' to 'Reference(<index into {output}>)'
-                Arg::Reference(i) => gapless_args.push(a.remap(Arg::Reference(output_indices[i]))),
+                Arg::Reference(j) => {
+                    let index = output_indices[j];
+                    gapless_args.push(a.remap(Arg::Reference(index)));
+                    dependencies.push((index, i));
+                }
                 _ => gapless_args.push(a.clone()),
             }
         }
         output.push(Command {
             label,
             args: (new_start, gapless_args.len()),
+            provides_for: (0, 0),
         })
     }
 
-    Ok((output, gapless_args))
+    // O(n log n) determine what each command provides for
+    // Thus we know the dependencies (the args) and reverse dependencies of
+    // all commands
+    dependencies.sort_unstable();
+    let providees = dependencies.iter().map(|x| x.1).collect::<Vec<_>>();
+
+    let mut cursor = 0;
+    let mut last_provider = dependencies[0].0;
+    for (i, (provider, _)) in dependencies.iter().enumerate().skip(1) {
+        if *provider != last_provider {
+            output[last_provider].provides_for = (cursor, i);
+            last_provider = *provider;
+            cursor = i;
+        }
+    }
+
+    Ok((output, gapless_args, providees))
     //Err(Token::new("Finished parsing", Source::Range(0, 0)))
 }
 
