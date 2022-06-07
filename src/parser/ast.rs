@@ -20,29 +20,32 @@ pub struct Command {
 pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput, ParseError> {
     ////////////////////////////////////////////////////////////////////////////
     // Reorder so that the HereDoc headers appear after their bodies
-    let mut sorted_exprs: Vec<Sexpr> = Vec::new();
-    let mut stdin_refs: Vec<usize> = Vec::new();
-    {
+    let mut sorted_exprs: Vec<Sexpr> = Vec::with_capacity(sexprs.len());
+    let stdin_refs = {
+        let cell_count = sexprs.last().unwrap().cell_id / 2;
+        let mut stdin_refs = Vec::with_capacity(cell_count + 1);
+
         // Move the evens after the odds, we start at 0
-        let mut buffer: Vec<Sexpr> = Vec::new();
+        let mut buffer: Vec<Sexpr> = Vec::with_capacity(sexprs.len());
         let mut past_id = 0;
         for exp in sexprs {
             if past_id + 2 <= exp.cell_id {
                 past_id += 2;
-                stdin_refs.push(sorted_exprs[sorted_exprs.len() - 1].out);
+                bound_push!(stdin_refs, sorted_exprs[sorted_exprs.len() - 1].out);
                 sorted_exprs.append(&mut buffer);
             }
             if exp.cell_id % 2 == 0 {
-                buffer.push(exp.clone());
+                bound_push!(buffer, exp.clone());
             } else {
-                sorted_exprs.push(exp.clone());
+                bound_push!(sorted_exprs, exp.clone());
             }
         }
         sorted_exprs.append(&mut buffer); // Add the final knit command
 
         // So that 'stdin_refs[x]' for the knit command does not go out of bounds
-        stdin_refs.push(0);
-    }
+        bound_push!(stdin_refs, 0);
+        stdin_refs
+    };
 
     ////////////////////////////////////////////////////////////////////////////
     // Resolve 'Arg::Stdin' to a 'Arg::Reference(_)' and syntax check
@@ -53,13 +56,17 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         let start = resolved_args.len();
         let parameters = &arg_defs[exp.args.0..exp.args.1];
         for (i, arg) in parameters.iter().enumerate() {
-            resolved_args.push(match arg.me {
-                Arg::Stdin => arg.remap(Arg::Reference(output_id)),
-                // These branches made impossible by sexpr.rs parse step
-                Arg::Assign | Arg::IdentFunc if i >= 1 => unreachable!(),
-                Arg::Ident if i >= 2 => unreachable!(),
-                _ => arg.clone(),
-            });
+            bound_push!(
+                resolved_args,
+                match arg.me {
+                    Arg::Stdin => arg.remap(Arg::Reference(output_id)),
+                    // These branches made impossible by sexpr.rs parse step
+                    Arg::Assign | Arg::IdentFunc if i >= 1 => unreachable!(),
+                    Arg::Ident if i >= 2 => unreachable!(),
+                    _ => arg.clone(),
+                }
+            );
+
             if i == 1 && matches!(arg.me, Arg::Ident) {
                 debug_assert_eq!(parameters[0].me, Arg::Assign);
             }
@@ -145,17 +152,20 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
                 // Change from 'Reference(<id>)' to 'Reference(<index into {output}>)'
                 Arg::Reference(j) => {
                     let index = output_indices[j];
-                    gapless_args.push(a.remap(Arg::Reference(index)));
-                    dependencies.push((index, i));
+                    bound_push!(gapless_args, a.remap(Arg::Reference(index)));
+                    bound_push!(dependencies, (index, i));
                 }
-                _ => gapless_args.push(a.clone()),
+                _ => bound_push!(gapless_args, a.clone()),
             }
         }
-        output.push(Command {
-            label,
-            args: (new_start, gapless_args.len()),
-            provides_for: (0, 0),
-        })
+        bound_push!(
+            output,
+            Command {
+                label,
+                args: (new_start, gapless_args.len()),
+                provides_for: (0, 0),
+            }
+        )
     }
 
     // O(n log n) determine what each command provides for

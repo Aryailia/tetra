@@ -1,7 +1,8 @@
 //run: cargo test -- --nocapture
 
-use crate::framework::{Source, Token};
 use std::mem::take;
+
+use crate::framework::{Source, Token};
 
 type ParseError = Token<&'static str>;
 type PullParseOutput = Result<Option<Lexeme>, ParseError>;
@@ -14,7 +15,7 @@ pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError>
     let mut walker = Walker::new(original);
 
     while let Some(token1) = parse(&mut fsm, &mut walker)? {
-        lexemes.push(token1);
+        bound_push!(lexemes, token1);
     }
     debug_assert_eq!(original, reconstruct_string(original, &lexemes));
     Ok(lexemes)

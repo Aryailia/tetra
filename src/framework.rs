@@ -125,13 +125,43 @@ impl<T> Token<T> {
     }
 }
 
-//trait FixedSizedVec<T> {
-//    fn bound_push(&mut self) {
-//
+//pub trait BoundPush<T> {
+//    fn bound_push(&mut self, entry: T) {
+//        debug_assert!(self.len() < self.capacity());
+//        self.push(entry);
 //    }
+//
+//    fn push(&mut self, entry: T);
+//    fn len(&self) -> usize;
+//    fn capacity(&self) -> usize;
 //}
 //
-//impl FixedSizedVec<T> in
+//impl<T> BoundPush<T> for Vec<T> {
+//    fn push(&mut self, entry: T) { self.push(entry); }
+//    fn len(&self) -> usize { self.len() }
+//    fn capacity(&self) -> usize { self.capacity() }
+//}
+
+// Use a macro over the traits so that we still get compiler messages
+// from the correct source code line
+macro_rules! bound_push {
+    ($vec:expr, $entry:expr) => {{
+        debug_assert!($vec.len() < $vec.capacity());
+        $vec.push($entry);
+    }};
+}
+
+//#[test]
+//#[should_panic]
+//fn checking_bound_push() {
+//    let mut a = Vec::with_capacity(2);
+//    bound_push!(a, 0);
+//    bound_push!(a, 1);
+//    bound_push!(a, 2);
+//    //a.bound_push(0);
+//    //a.bound_push(1);
+//    //a.bound_push(2);
+//}
 
 //#[test]
 //fn hello() {

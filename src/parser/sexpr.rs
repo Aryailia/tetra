@@ -12,7 +12,6 @@
 // this ambiguity until we know the function list or execute variable assigns.
 // And we do our best to optimise these extra s-exprs away in the ast.rs step.
 
-
 use super::lexer::LexType;
 use crate::framework::{Source, Token};
 
@@ -97,15 +96,20 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
     //    debug_print_token!(l, debug_source);
     //}
 
-    let mut knit_sexpr = Vec::new(); // For the final document concat
+    let mut knit_sexpr = Vec::with_capacity(
+        1 + lexemes
+            .iter()
+            .filter(|l| matches!(l.me, LexType::HereDocStart))
+            .count(),
+    ); // For the final document knit (concat)
     let mut cell_id = 0; // HereDoc headers and bodies get different id's
     let buffer = &mut Vec::with_capacity(lexemes.len());
 
     // We act as if all documents start with an invisible heredoc at the start
     // Model after the actions of 'LexType::HereDocClose' branch
-    fsm.args.push(Token::new(Arg::Stdin, Source::Range(0, 0)));
+    bound_push!(fsm.args, Token::new(Arg::Stdin, Source::Range(0, 0)));
     let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-    knit_sexpr.push(output_token);
+    bound_push!(knit_sexpr, output_token);
     cell_id += 1;
 
     for l in lexemes {
@@ -115,7 +119,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
         match (&fsm.mode, &l.me) {
             (Mode::Text, LexType::Text) => {
                 //println!("{:?}", l.to_str(debug_source));
-                buffer.push(l.remap(SexprType::Str));
+                bound_push!(buffer, l.remap(SexprType::Str));
             }
             (Mode::Text, LexType::BlockComment) => {} // Skip comments
             (Mode::Text, LexType::HereDocStart) => {
@@ -131,68 +135,67 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 // fully outputted all its s-exprs so we can empty {buffer}
                 buffer.clear();
                 // Do not need to demarcate a new s-expr because we clear
-                //buffer.push(Token::new(SexprType::NewFunction, source));
-                buffer.push(Token::new(SexprType::PipedStdin, source));
+                //bound_push!(buffer, Token::new(SexprType::NewFunction, source));
+                bound_push!(buffer, Token::new(SexprType::PipedStdin, source));
             }
             (Mode::Text, LexType::InlineStart) => {
                 fsm.mode = Mode::Code;
-                buffer.push(Token::new(SexprType::NewFunction, source));
+                bound_push!(buffer, Token::new(SexprType::NewFunction, source));
             }
             (Mode::Text, _) => debug_print_token!(die@l, debug_source),
 
             ////////////////////////////////////////////////////////////////////
             (Mode::Code, LexType::BlockComment) => debug_print_token!(die@l, debug_source),
             (Mode::Code, LexType::Stdin) => {
-                buffer.push(Token::new(SexprType::Stdin, source));
-                //args.push(Token::new());
+                bound_push!(buffer, Token::new(SexprType::Stdin, source));
             }
             (Mode::Code, LexType::Ident) => {
-                buffer.push(Token::new(SexprType::Ident, source));
+                bound_push!(buffer, Token::new(SexprType::Ident, source));
             }
             (Mode::Code, LexType::IdentParen) => {
-                buffer.push(Token::new(SexprType::IdentFunc, source));
-                //fsm.stack.push(buffer.len());
+                bound_push!(buffer, Token::new(SexprType::IdentFunc, source));
+                //bound_push!(fsm.stack, buffer.len());
             }
             (Mode::Code, LexType::Pipe) => {
                 let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                buffer.push(output_token);
-                buffer.push(Token::new(SexprType::Pipe, source));
+                bound_push!(buffer, output_token);
+                bound_push!(buffer, Token::new(SexprType::Pipe, source));
             }
             (Mode::Code, LexType::HereDocClose) => {
                 fsm.mode = Mode::Text;
                 let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                knit_sexpr.push(output_token);
+                bound_push!(knit_sexpr, output_token);
                 cell_id += 1;
-                //buffer.push(output_token);
+                //bound_push!(buffer, output_token);
             }
             (Mode::Code, LexType::InlineClose) => {
                 fsm.mode = Mode::Text;
                 let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                buffer.push(output_token);
+                bound_push!(buffer, output_token);
             }
 
             (Mode::Code, LexType::QuoteStart) => {
                 fsm.mode = Mode::Quote;
-                buffer.push(Token::new(SexprType::NewFunction, source));
+                bound_push!(buffer, Token::new(SexprType::NewFunction, source));
             }
             (Mode::Code, LexType::CmdSeparator) => {
                 // "display ''; cite" means we ignore the output of the first command
                 let _output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                buffer.push(Token::new(SexprType::NewFunction, source));
+                bound_push!(buffer, Token::new(SexprType::NewFunction, source));
             }
             // After lexing, open parenthesis mean a function call
             //(Mode::Code, LexType::ParenStart) => {
             //    //let func_ident = buffer.pop().unwrap();
             //    //debug_assert!(matches!(func_ident.me, SexprType::Ident));
             //    ////println!("{:?}", buffer);
-            //    //buffer.push(Token::new(SexprType::NewFunction, source));
-            //    //buffer.push(func_ident);
+            //    //bound_push!(buffer, Token::new(SexprType::NewFunction, source));
+            //    //bound_push!(buffer, func_ident);
             //}
             (Mode::Code, LexType::ParenClose) => {
                 // if(cite a)
                 // if cite(a)
                 //let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                //buffer.push(output_token);
+                //bound_push!(buffer, output_token);
                 let i = buffer
                     .iter()
                     .rposition(|t| matches!(t.me, SexprType::IdentFunc))
@@ -202,28 +205,27 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 // e.g. `cite(ref 1)` -> push `ref 1`
                 if i + 1 < buffer.len() {
                     let output_token = fsm.drain_push_sexpr(buffer, cell_id, i + 1)?;
-                    buffer.push(output_token);
+                    bound_push!(buffer, output_token);
                 }
 
                 // If there was a pipe then process normally
                 if matches!(buffer[i - 1].me, SexprType::Pipe | SexprType::PipedStdin) {
                     let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                    buffer.push(output_token);
+                    bound_push!(buffer, output_token);
                 // Otherwise we are nested within another function call and
                 // only process the function itself
                 // e.g. `cite(ref 1)` -> push `cite(<output>)` after the first push
                 } else {
                     let output_token = fsm.drain_push_sexpr(buffer, cell_id, i)?;
-                    buffer.push(output_token);
-                    //buffer.push(Token::new(SexprType::NewFunction, source));
+                    bound_push!(buffer, output_token);
+                    //bound_push!(buffer, Token::new(SexprType::NewFunction, source));
                 }
             }
             (Mode::Code, LexType::Assign) => {
-                buffer.push(Token::new(SexprType::Assign, source));
+                bound_push!(buffer, Token::new(SexprType::Assign, source));
             }
             (Mode::Code, LexType::ArgSeparator) => {
-                buffer.push(l.remap(SexprType::ArgSeparator));
-                //buffer.push
+                bound_push!(buffer, l.remap(SexprType::ArgSeparator));
             }
             (Mode::Code, _) => return Err(Token::new("Sexpr.rs: Unhandled token", source)),
             //(Mode::Code, _) => debug_print_token!(die@l, debug_source),
@@ -232,15 +234,15 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
             // @TODO: What should happen with quotes in succession without
             //        whitespace separator e.g. `cite "jane"'doe'`
             (Mode::Quote, LexType::Quoted) => {
-                buffer.push(Token::new(SexprType::Str, source));
+                bound_push!(buffer, Token::new(SexprType::Str, source));
             }
             (Mode::Quote, LexType::QuoteEscaped(c)) => {
-                buffer.push(Token::new(SexprType::Char(*c), source));
+                bound_push!(buffer, Token::new(SexprType::Char(*c), source));
             }
             (Mode::Quote, LexType::QuoteClose) => {
                 fsm.mode = Mode::Code;
                 let output_token = fsm.drain_push_sexpr(buffer, cell_id, 0)?;
-                buffer.push(output_token);
+                bound_push!(buffer, output_token);
             }
             (Mode::Quote, _) => debug_print_token!(die@l, debug_source),
         }
@@ -316,6 +318,7 @@ struct Fsm {
     args: Vec<Token<Arg>>,
     args_cursor: Cursor,
     args_stdin_index: usize,
+    arg_buffer: Vec<Token<Arg>>, // For re-ordering piped values to the end
 
     stdin_range: (usize, usize),
     stack: Vec<usize>, // @TODO: for paraenthesis and bracket balancing
@@ -333,6 +336,7 @@ impl Fsm {
             args: Vec::with_capacity(capacity),
             args_cursor: Cursor(0),
             args_stdin_index: 0,
+            arg_buffer: Vec::with_capacity(capacity),
 
             stdin_range: (0, 0),
             stack: Vec::with_capacity(capacity),
@@ -373,27 +377,26 @@ impl Fsm {
         //
         // This is where we would do pratt parsing for order of operations
         // but there is only one in-fix operator, '=' in the language
-        let mut arg_buffer = Vec::new();
+        self.arg_buffer.clear();
         while let Some(i) = buffer[parameter_start..]
             .iter()
             .rposition(|t| matches!(t.me, SexprType::Assign))
         {
             let (output_id, source) =
-                self.parse_push_s_args(cell_id, &mut arg_buffer, buffer, parameter_start + i + 1)?;
+                self.parse_push_s_args(cell_id, buffer, parameter_start + i + 1)?;
 
             // The while sentinel ensures this is an SexprType::Assign
             let assign = buffer.pop().unwrap();
             debug_assert!(matches!(assign.me, SexprType::Assign));
-            self.args.push(assign.remap(Arg::Assign));
+            bound_push!(self.args, assign.remap(Arg::Assign));
 
-            buffer.push(Token::new(SexprType::Reference(output_id), source));
+            bound_push!(buffer, Token::new(SexprType::Reference(output_id), source));
             // Push assign off for next s-expr because for `a = b + 1`, we
             // want `b + 1` then `a = <result>`
         }
 
-        let (output_id, source) =
-            self.parse_push_s_args(cell_id, &mut arg_buffer, buffer, parameter_start)?;
-        //self.args.push(Token::new(Arg::Output, Source::Range(0, 0)));
+        let (output_id, source) = self.parse_push_s_args(cell_id, buffer, parameter_start)?;
+        //bound_push!(self.args, Token::new(Arg::Output, Source::Range(0, 0)));
         Ok(Token::new(SexprType::Reference(output_id), source))
     }
 
@@ -412,11 +415,9 @@ impl Fsm {
         // We push to a buffer, which then gets pushed to {self.args}
         // So that single-argument idents can be pushed before
         // the current command, so that {self.args_cursor} tracks properly
-        buffer: &mut Vec<Token<Arg>>,
         params: &mut Vec<Token<SexprType>>,
         start: usize,
     ) -> Result<(usize, Source), ParseError> {
-
         let mut comma_after_first = false;
         {
             let mut first: Option<Arg> = None;
@@ -475,8 +476,8 @@ impl Fsm {
             //println!("{:?} {:?}", param_count, p);
 
             match p.me {
-                SexprType::Str => buffer.push(p.remap(Arg::Str)),
-                SexprType::Char(c) => buffer.push(p.remap(Arg::Char(c))),
+                SexprType::Str => bound_push!(self.arg_buffer, p.remap(Arg::Str)),
+                SexprType::Char(c) => bound_push!(self.arg_buffer, p.remap(Arg::Char(c))),
                 SexprType::Assign => unreachable!(),
                 SexprType::ArgSeparator => {}
                 SexprType::Ident => {
@@ -486,24 +487,24 @@ impl Fsm {
                     // If we are the first argument and there is no
                     // {comma_after_first}, then the current {p} is the
                     // label for the command that {params.drain(start..)} is
-                    if buffer.is_empty() && !comma_after_first {
+                    if self.arg_buffer.is_empty() && !comma_after_first {
                         // @TODO: add function call if second argument is a
                         //debug_assert_eq!(param_count, 1);
 
-                        buffer.push(p.remap(Arg::Ident));
+                        bound_push!(self.arg_buffer, p.remap(Arg::Ident));
 
                     // Otherwise we are argument of a command whose label
                     // is specified before the current {p}
                     // e.g. '{| cite(cite(), 1) |}' where {p} is the second cite
                     } else {
-                        self.args.push(p.remap(Arg::Ident));
+                        bound_push!(self.args, p.remap(Arg::Ident));
                         let output_id = self.output.len();
-                        self.output.push(Sexpr {
+                        bound_push!(self.output, Sexpr {
                             cell_id,
                             args: self.args_cursor.move_to(self.args.len()),
                             out: output_id,
                         });
-                        buffer.push(p.remap(Arg::Reference(output_id)));
+                        bound_push!(self.arg_buffer, p.remap(Arg::Reference(output_id)));
                     }
                 }
 
@@ -515,32 +516,32 @@ impl Fsm {
                         }
                     };
 
-                    if buffer.is_empty() {
-                        buffer.push(Token::new(Arg::IdentFunc, new_source));
+                    if self.arg_buffer.is_empty() {
+                        bound_push!(self.arg_buffer, Token::new(Arg::IdentFunc, new_source));
                     } else {
                         // We are always the label of a command, i.e.
                         // we cannot be a variable ident
                         unreachable!()
                     }
                 }
-                SexprType::Stdin => buffer.push(p.remap(Arg::Stdin)),
-                SexprType::PipedStdin if buffer.is_empty() => {
+                SexprType::Stdin => bound_push!(self.arg_buffer, p.remap(Arg::Stdin)),
+                SexprType::PipedStdin if self.arg_buffer.is_empty() => {
                     piped_arg = Some(p.remap(Arg::Stdin));
                 }
                 SexprType::PipedStdin => unreachable!(),
-                SexprType::Pipe if buffer.len() == 1 => {
-                    piped_arg = buffer.pop();
+                SexprType::Pipe if self.arg_buffer.len() == 1 => {
+                    piped_arg = self.arg_buffer.pop();
                     debug_assert!(piped_arg.is_some())
                 }
                 SexprType::Pipe => unreachable!(),
-                SexprType::Reference(x) => buffer.push(p.remap(Arg::Reference(x))),
+                SexprType::Reference(x) => bound_push!(self.arg_buffer, p.remap(Arg::Reference(x))),
                 SexprType::NewFunction => {}
             }
         }
         if let Some(arg) = piped_arg {
-            buffer.push(arg)
+            bound_push!(self.arg_buffer, arg)
         }
-        self.args.append(buffer);
+        self.args.append(&mut self.arg_buffer);
 
         let output_id = self.output.len();
         // The simple case of determing args_range would be to just calculate
@@ -550,7 +551,7 @@ impl Fsm {
         // in a different order
         let range = self.args_cursor.move_to(self.args.len());
         let source = source_span(range, &self.args);
-        self.output.push(Sexpr {
+        bound_push!(self.output, Sexpr {
             cell_id,
             args: range,
             out: output_id,
