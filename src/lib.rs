@@ -34,14 +34,67 @@ mod tests {
     use super::*;
     use framework::{self, Token};
     use parser::{ast, lexer, sexpr};
+    use run::markup::{CustomKey, CustomValue};
 
-    const FILE: &str = r#"
+    #[test]
+    #[allow(dead_code)]
+    fn it_works() {
+        let file = _REF;
+        let lexemes = log(file, lexer::process(file, true));
+        //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(file)));
+        let (sexprs, args) = log(file, sexpr::process(&lexemes, file));
+        //sexprs
+        //    .iter()
+        //    .enumerate()
+        //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, file)));
+        let (ast, args, provides_for) = log(file, ast::process(&sexprs, &args));
+        ast.iter().enumerate().for_each(|(i, t)| {
+            println!(
+                "{:?} | {} -> {}",
+                &provides_for[t.provides_for.0..t.provides_for.1],
+                t.to_display(&args, file),
+                i
+            )
+        });
+        let ctx = run::markup::default_context();
+        let out = log(
+            file,
+            run::executor::run::<CustomKey, CustomValue>(ctx, &ast, &args, file),
+        );
+        //println!("{}", out);
+
+        if false {
+            use std::io::Write;
+            let mut outfile = std::fs::File::create(
+                std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/test.adoc"))
+            ).unwrap();
+            writeln!(&mut outfile, "{}", out).unwrap();
+        }
+    }
+
+    #[allow(dead_code)]
+    fn log<T, E: Debug>(original: &str, result: Result<T, Token<E>>) -> T {
+        match result {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{} {:?}", e.get_context(original), e);
+                std::process::exit(1);
+                //panic!("\n{:?}\n{}", e, e.get_context(original));
+            }
+            //Err(e) => match e {
+            //    CustomErr::Parse(err) => panic!("\nERROR: {:?}\n", err.msg()),
+            //    err => panic!("{:?}", err),
+            //},
+        }
+    }
+
+    const _FILE: &str = r#"
 :title: Hello
 {# Comment #}
-:bibliography: {$ hello = env "yo"; env "BIBLIOGRAPHY" $}
+:bibliography: {$ hello = env "HOME"; env "BIBLIOGRAPHY" $}
 {# | test_pipe  #}
 
-{| run "graphviz", hello | prettify . ; env . |}
+{| run "graphviz", hello | prettify . |}
 digraph {
     A -> B
     A -> C
@@ -61,42 +114,32 @@ Come to the dark side of the moon
 Final stuff
 "#;
 
-    #[test]
-    #[allow(dead_code)]
-    fn it_works() {
-        let _function_list = ["hello", "cite"];
-        let lexemes = log(FILE, lexer::process(FILE, true));
-        //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(FILE)));
-        let (sexprs, args) = log(FILE, sexpr::process(&lexemes, FILE));
-        sexprs
-            .iter()
-            .enumerate()
-            .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, FILE)));
-        let (ast, args, provides_for) = log(FILE, ast::process(&sexprs, &args));
-        ast.iter().enumerate().for_each(|(i, t)| {
-            println!(
-                "{:?} | {} -> {}",
-                &provides_for[t.provides_for.0..t.provides_for.1],
-                t.to_display(&args, FILE),
-                i
-            )
-        });
-        log(FILE, run::run(&ast, &args, &_function_list, FILE));
-    }
+    const _REF: &str = r#"
+{$ cite "@capper2012" $} the
+{$ cite "@margulis2004" $} quick brown
+{$ cite "[@steinfieldEtAl2012]" $} do
 
-    #[allow(dead_code)]
-    fn log<T, E: Debug>(original: &str, result: Result<T, Token<E>>) -> T {
-        match result {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{} {:?}", e.get_context(original), e);
-                std::process::exit(1);
-                //panic!("\n{:?}\n{}", e, e.get_context(original));
-            }
-            //Err(e) => match e {
-            //    CustomErr::Parse(err) => panic!("\nERROR: {:?}\n", err.msg()),
-            //    err => panic!("{:?}", err),
-            //},
-        }
-    }
++++++
+{| run "graphviz" |}
+digraph {
+    A -> B
+    A -> C
+}
+{| end |}
+++++
+
+This is an example of sh
+
+{| run "sh" |}
+echo yo
+{| endif |}
+
+
+== References
+
+{$ references $}
+
+stuff
+
+"#;
 }
