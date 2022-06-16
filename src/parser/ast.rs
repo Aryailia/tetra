@@ -73,6 +73,13 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         }
         exp.args = (start, resolved_args.len());
     }
+    //sorted_exprs.iter().for_each(|s| println!("asdf {:?}", s));
+    //sorted_exprs.iter().for_each(|exp|
+    //    println!(
+    //        "asdf {:?} {:?}",
+    //        exp,
+    //        &resolved_args[exp.args.0 .. exp.args.1],
+    //    ));
 
     ////////////////////////////////////////////////////////////////////////////
     // Optimisation step, remove any single command
@@ -84,16 +91,17 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
             match resolved_args[first_index].me {
                 // Replace a pointer to a literal with just the literal
                 Arg::Str | Arg::Char(_) => {
-                    let (first, args) = resolved_args[first_index..].split_at_mut(1);
+                    let (first, rest) = resolved_args[first_index..].split_at_mut(1);
                     let first_arg = &first[0];
-                    args.iter_mut().for_each(|arg| {
+                    rest.iter_mut().for_each(|arg| {
                         if let Arg::Reference(i) = arg.me {
                             if i == exp.out {
                                 *arg = first_arg.clone();
                             }
                         }
                     });
-                    false
+                    // Do not remove if there are no more arguments left
+                    rest.len() > 0
                 }
 
                 // Replace double pointers with a direct pointer
