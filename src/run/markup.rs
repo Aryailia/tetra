@@ -5,6 +5,9 @@ use std::io::Write;
 use std::process;
 use std::process::Stdio;
 
+use crate::framework::Token;
+use crate::parser::{sexpr::Arg, ast::Command};
+
 use super::executor::concat;
 use super::executor::{Bindings, Dirty, MyError, PureResult, StatefulResult, Value, Variables};
 
@@ -41,6 +44,13 @@ pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
     ctx
 }
 
+impl<'a> Bindings<'a, CustomKey, CustomValue> {
+    pub fn run(&self, ast: &[Command], args: &[Token<Arg>], original: &str) -> Result<String, Token<&'static str>> {
+        super::executor::run(self, ast, args, original)
+    }
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CustomKey {
@@ -58,6 +68,7 @@ pub enum CustomValue {
 
 pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     if args.len() > 2 {
+        //println!("len {}", args.len());
         todo!("temp panic for when we put actual error handling");
     }
 
@@ -75,17 +86,17 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 
     match lang {
         "r" => {
-            println!("Running r");
+            println!("markup.rs: Running r");
         }
-        "graphviz" => {
+        "graphviz" | "dot" => {
             return run_command(
                 "dot",
                 Some(cell_body),
                 &["-Tsvg"],
             ).map(Value::String)
         }
-        "sh" => println!("Running shell"),
-        s => todo!("{}", s),
+        "sh" => println!("markup.rs: Running shell"),
+        s => todo!("markup.rs: {}", s),
     }
 
     Ok(Value::String("".to_string()))
@@ -107,7 +118,6 @@ fn cite<'a>(
     old_output: Value<'a, CustomValue>,
     storage: &mut Variables<'a, CustomKey, CustomValue>,
 ) -> StatefulResult<'a, CustomValue> {
-    println!("{:?}", &args[0]);
     if args.len() != 1 {
         panic!();
     }

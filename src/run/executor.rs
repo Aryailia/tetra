@@ -108,7 +108,7 @@ const ITERATION_LIMIT: usize = 1000;
 
 //pub fn run<'a, 'source, K, V: Clone>(
 pub fn run<'source, K, V: Clone>(
-    ctx: Bindings<K, V>,
+    ctx: &Bindings<K, V>,
     ast: &[Command],
     args: &[Token<Arg>],
     original: &'source str,
@@ -120,6 +120,7 @@ pub fn run<'source, K, V: Clone>(
     let mut outputs: Vec<(Dirty, Value<'source, V>)> = Vec::with_capacity(ast.len());
     let mut binded_args = Vec::with_capacity(args.len());
 
+    debug_assert!(ast.len() >= 1);
     for cmd in ast.iter() {
         cmd.init_args(original, args, &mut binded_args);
         //if let Label::Assign(_) = cmd.label {
@@ -201,8 +202,8 @@ pub fn run<'source, K, V: Clone>(
     ////binded_args.iter().for_each(|p| println!("{:?}", p));
     //outputs.iter().for_each(|p| println!("{:?}", p));
 
-    println!("It took {} iteration(s) to parse", iter_count);
-    println!("====start====");
+    //println!("It took {} iteration(s) to parse", iter_count);
+    //println!("====start====");
     match outputs.pop() {
         Some((_, Value::String(s))) => Ok(s),
         _ => unreachable!(),

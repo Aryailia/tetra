@@ -9,7 +9,8 @@ type PullParseOutput = Result<Option<Lexeme>, ParseError>;
 type Lexeme = Token<LexType>;
 
 pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError> {
-    let mut lexemes = Vec::with_capacity(original.len());
+    // We add plus one for the empty string case  "" which is one lexeme long
+    let mut lexemes = Vec::with_capacity(original.len() + 1);
 
     let mut fsm = CellFsm::new();
     let mut walker = Walker::new(original);

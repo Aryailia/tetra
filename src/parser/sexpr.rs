@@ -41,6 +41,25 @@ pub type ParseError = Token<&'static str>;
 //    //    rhs: AstNodeId,
 //    //},
 //}
+//let mut arena = Arena::<Node>::new();
+
+//// Create the AST for `a * (b + 3)`.
+////let three_id = ast_nodes.alloc(AstNode::Const(3));
+////let b = ast_nodes.alloc(AstNode::Var("b".into()));
+////let b_plus_three = ast_nodes.alloc(AstNode::Add {
+////    lhs: b,
+////    rhs: three_id,
+////});
+////let a = ast_nodes.alloc(AstNode::Var("a".into()));
+////let a_times_b_plus_three = ast_nodes.alloc(AstNode::Mul {
+////    lhs: a,
+////    rhs: b_plus_three,
+////});
+
+//// Can use indexing to access allocated nodes.
+////assert_eq!(ast_nodes[three_id], AstNode::Const(3));
+
+
 
 macro_rules! debug_print_token {
     ($token:expr, $source_text:expr) => {
@@ -71,27 +90,9 @@ macro_rules! debug_print_token {
 //
 // Additionally, we haven't discriminated variable and function identifiers at
 // this stage yet. E.g. "cite len a" might all be functions.
-
 pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOutput, ParseError> {
-    //let mut arena = Arena::<Node>::new();
-
-    //// Create the AST for `a * (b + 3)`.
-    ////let three_id = ast_nodes.alloc(AstNode::Const(3));
-    ////let b = ast_nodes.alloc(AstNode::Var("b".into()));
-    ////let b_plus_three = ast_nodes.alloc(AstNode::Add {
-    ////    lhs: b,
-    ////    rhs: three_id,
-    ////});
-    ////let a = ast_nodes.alloc(AstNode::Var("a".into()));
-    ////let a_times_b_plus_three = ast_nodes.alloc(AstNode::Mul {
-    ////    lhs: a,
-    ////    rhs: b_plus_three,
-    ////});
-
-    //// Can use indexing to access allocated nodes.
-    ////assert_eq!(ast_nodes[three_id], AstNode::Const(3));
-
-    let mut fsm = Fsm::new(lexemes.len(), debug_source);
+    // + 2 for the prepended initial heredoc and the knit command
+    let mut fsm = Fsm::new(lexemes.len() + 5, debug_source);
     //for l in lexemes {
     //    debug_print_token!(l, debug_source);
     //}
@@ -255,6 +256,9 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
     buffer.extend(knit_sexpr);
     fsm.drain_push_sexpr(buffer, cell_id + 1, 0)?;
 
+    //for p in &fsm.output {
+    //    println!(" sexpr  {}", p.to_display(&fsm.args, debug_source));
+    //}
     //for p in buffer {
     //    print!(" remaining  ");
     //    debug_print_token!(p, debug_source);
@@ -563,18 +567,25 @@ impl Fsm {
 
 fn source_span((start, close): (usize, usize), args: &[Token<Arg>]) -> Source {
     let parameters = &args[start..close];
-    debug_assert!(!parameters.is_empty());
-    // Would only be empty if we push an s-expr with no arguments, which
-    // should not be possible. We already if-statement catch the
-    // 'LexType::IdentFunc' case, i.e. a case like '{$ cite() $}'
 
+    // All {args[].source} should only be Source::Range
+    #[cfg(debug_assertions)]
+    {
+        for p in parameters {
+            debug_assert!(matches!(p.source, Source::Range(_, _)));
+        }
+    }
+
+    // Default to (0, 0) when it is an empty statement
     let source1 = match parameters.first().map(|p| &p.source) {
         Some(Source::Range(a, _)) => *a,
-        _ => unreachable!(), // {parameters} guarenteed to not be empty
+        //Some(_) => unreachable!(),
+        _ => 0,
     };
     let source2 = match parameters.last().map(|p| &p.source) {
         Some(Source::Range(_, b)) => *b,
-        _ => unreachable!(), // {parameters} guarenteed to not be empty
+        //Some(_) => unreachable!(),
+        _ => 0,
     };
     Source::Range(source1, source2)
 }

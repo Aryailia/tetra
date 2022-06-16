@@ -6,8 +6,10 @@
 #[macro_use]
 mod framework;
 mod errors;
-mod parser;
-mod run;
+pub mod parser;
+pub mod run;
+
+pub use framework::Token;
 
 //use std::fmt::Debug;
 //
@@ -59,7 +61,7 @@ mod tests {
         let ctx = run::markup::default_context();
         let out = log(
             file,
-            run::executor::run::<CustomKey, CustomValue>(ctx, &ast, &args, file),
+            run::executor::run::<CustomKey, CustomValue>(&ctx, &ast, &args, file),
         );
         //println!("{}", out);
 
