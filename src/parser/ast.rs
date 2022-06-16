@@ -127,6 +127,8 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
     }
 
     // Build final result array
+    // {dependencies} is Vec<(usize, usize)> which means data flows from usize1
+    // to usize2, i.e. {output[usize2]} uses {output[usize1]} as an argument
     let mut output = Vec::with_capacity(sorted_exprs.len());
     let mut gapless_args = Vec::with_capacity(arg_defs.len());
     let mut dependencies = Vec::with_capacity(arg_defs.len());
@@ -168,21 +170,67 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         )
     }
 
+    ////////////////////////////////////////////////////////////////////////////
+    // Set {output[].provides_for} to demarcate reverse dependent groups
+
     // O(n log n) determine what each command provides for
     // Thus we know the dependencies (the args) and reverse dependencies of
     // all commands
     dependencies.sort_unstable();
-    let providees = dependencies.iter().map(|x| x.1).collect::<Vec<_>>();
 
-    let mut cursor = 0;
-    let mut last_provider = dependencies[0].0;
-    for (i, (provider, _)) in dependencies.iter().enumerate().skip(1) {
+    // {dependencies} is sorted by the second value. We essentially are
+    // instead sorting by the right values.
+    //
+    // Like output {output[].args} is a range into {gapless_args},
+    // {output[].provides_for} is a range into {providees}
+    let mut cursor = 0; // cursor for ranges in {providees}
+    let mut last_provider = dependencies.len(); // Used to determine groupings
+
+    // {last_provider} at {dependencies.len()} is guaranteed to trigger at
+    // {i} = 1
+    for (i, (provider, _)) in dependencies.iter().enumerate() {
         if *provider != last_provider {
-            output[last_provider].provides_for = (cursor, i);
             last_provider = *provider;
             cursor = i;
         }
+        output[last_provider].provides_for = (cursor, i + 1);
     }
+
+    // Some sanity checks in debug mode
+    #[cfg(debug_assertions)]
+    {
+        //println!("{:?}", dependencies);
+        //for (i, cmd) in output.iter().enumerate() {
+        //    let range = &dependencies[cmd.provides_for.0..cmd.provides_for.1];
+        //    println!("{} {:?}", i, range);
+        //}
+
+
+        // Ensure these are valid ranges
+        // One concern is {last_provider} init to 0 is fine
+        for cmd in &output {
+            debug_assert!(cmd.provides_for.0 <= cmd.provides_for.1);
+        }
+
+        // Ensure {output[].provides_for} is demarcating the right commands
+        // (injective check)
+        for (i, cmd) in output.iter().enumerate() {
+            let range = &dependencies[cmd.provides_for.0..cmd.provides_for.1];
+            for (provider, _receiver) in range {
+                debug_assert_eq!(i, *provider);
+            }
+        }
+
+        // Make sure all reverse dependencies map somewhere (surjective check)
+        let count = output.iter()
+            .map(|cmd| cmd.provides_for.1 - cmd.provides_for.0)
+            .sum();
+        debug_assert_eq!(dependencies.len(), count);
+
+    }
+
+    // Remove the left values from {dependencies}
+    let providees = dependencies.iter().map(|x| x.1).collect::<Vec<_>>();
 
     Ok((output, gapless_args, providees))
     //Err(Token::new("Finished parsing", Source::Range(0, 0)))
