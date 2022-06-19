@@ -1,31 +1,18 @@
+// This the default flavour of this templating markup language. If you want
+// to implement your own flavour (i.e. with your own functions), you should
+// be able to copy this file directly.
+
 //run: cargo test -- --nocapture
 
-use std::io::Write;
-//use std::default::Default;
-use std::process;
-use std::process::Stdio;
+// Do not use super so that if others want to make their own flavour, they
+// can copy this file without issue
+use crate::run::{Bindings, Dirty, MyError, PureResult, StatefulResult};
+use crate::run::{Value, Variables};
 
-use super::executor::concat;
-use super::{Bindings, Dirty, MyError, PureResult, StatefulResult};
-use super::{Value, Variables};
+use crate::run::utility::{code, concat, env};
+use crate::run::utility::{fetch_env_var, run_command};
 
-//impl Default for Bindings<'_, CustomKey, CustomValue>  {
-//    fn default() -> Self {
-//        let mut ctx = Bindings::new();
-//        ctx.register_pure_function("env", &concat);
-//        ctx.register_pure_function("include", &concat);
-//        ctx.register_pure_function("run", &concat);
-//        ctx.register_pure_function("prettify", &concat);
-//        ctx.register_pure_function("end", &concat);
-//        ctx.register_pure_function("if", &concat);
-//        ctx.register_pure_function("endif", &concat);
-//        //ctx.register_pure_function("cite", &concat);
-//        ctx.register_stateful_function("cite", &cite);
-//        ctx.register_stateful_function("references", &references);
-//        ctx
-//    }
-//
-//}
+
 pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
     let mut ctx = Bindings::new();
     ctx.register_pure_function("env", &env);
@@ -55,46 +42,6 @@ pub enum CustomValue {
     CiteList(Vec<String>),
     Citation(usize),
 }
-
-pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
-    if args.len() > 2 {
-        //println!("len {}", args.len());
-        todo!("temp panic for when we put actual error handling");
-    }
-
-    //let lang = unwrap!(or_invalid args[0] => String(x) | Str(x) => x);
-    let lang: &str = match &args[0] {
-        Value::String(x) => x,
-        Value::Str(x) => x,
-        _ => return Err("Invalid type"),
-    };
-    let cell_body: &str = match &args[1] {
-        Value::String(x) => x,
-        Value::Str(x) => x,
-        _ => return Err("Invalid type"),
-    };
-
-    match lang {
-        "r" => {
-            println!("markup.rs: Running r");
-        }
-        "graphviz" | "dot" => {
-            return run_command("dot", Some(cell_body), &["-Tsvg"]).map(Value::String)
-        }
-        "sh" => println!("markup.rs: Running shell"),
-        s => todo!("markup.rs: {}", s),
-    }
-
-    Ok(Value::String("".to_string()))
-}
-
-//fn code<'a>(
-//    args: &[Value<'a, CustomValue>],
-//    old_output: Value<'a, CustomValue>,
-//    storage: &mut Variables<'a, CustomKey, CustomValue>,
-//) -> StatefulResult<'a, CustomValue> {
-//    Ok((Dirty::Waiting, Value::String("".to_string())))
-//}
 
 ////////////////////////////////////////////////////////////////////////////////
 fn cite<'a>(
@@ -211,16 +158,6 @@ fn references<'a>(
     }
 }
 
-pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
-    let name: &str = match &args[0] {
-        Value::Str(s) => s,
-        Value::String(s) => s,
-        _ => return Err("Invalid type, expecting string"),
-    };
-    fetch_env_var(name).map(Value::String)
-}
-
-////////////////////////////////////////////////////////////////////////////////
 
 pub fn pandoc_cite(citekey: &str) -> Result<String, MyError> {
     let bibliography = fetch_env_var("BIBLIOGRAPHY")?;
@@ -234,47 +171,3 @@ pub fn pandoc_cite(citekey: &str) -> Result<String, MyError> {
     Ok(citation)
 }
 
-/******************************************************************************
- * Helpers
- ******************************************************************************/
-
-pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<String, MyError> {
-    let child = if let Some(s) = stdin {
-        let mut child = process::Command::new(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(s.as_bytes()).unwrap();
-        child
-    } else {
-        process::Command::new(program)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    let output = child.wait_with_output().unwrap();
-
-    let out = String::from_utf8(output.stdout).unwrap();
-    if output.status.success() {
-        Ok(out)
-    } else {
-        panic!()
-        //Err(CustomErr::NonZeroStatus(
-        //    output.status.code().unwrap_or(1),
-        //    out,
-        //))
-    }
-}
-
-fn fetch_env_var(key: &str) -> Result<String, MyError> {
-    Ok(std::env::vars()
-        .find(|(k, _)| k == key)
-        .ok_or("Missing BIBLIOGRAPHY environment variable")?
-        .1)
-}

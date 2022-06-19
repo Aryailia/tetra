@@ -101,7 +101,7 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
                         }
                     });
                     // Do not remove if there are no more arguments left
-                    rest.len() > 0
+                    rest.is_empty()
                 }
 
                 // Replace double pointers with a direct pointer
@@ -213,7 +213,6 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         //    println!("{} {:?}", i, range);
         //}
 
-
         // Ensure these are valid ranges
         // One concern is {last_provider} init to 0 is fine
         for cmd in &output {
@@ -230,11 +229,11 @@ pub fn process(sexprs: &[Sexpr], arg_defs: &[Token<Arg>]) -> Result<ParseOutput,
         }
 
         // Make sure all reverse dependencies map somewhere (surjective check)
-        let count = output.iter()
+        let count = output
+            .iter()
             .map(|cmd| cmd.provides_for.1 - cmd.provides_for.0)
             .sum();
         debug_assert_eq!(dependencies.len(), count);
-
     }
 
     // Remove the left values from {dependencies}

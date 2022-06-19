@@ -35,20 +35,19 @@ mod tests {
 
     use super::*;
     use framework::{self, Token};
-    use parser::{ast, lexer, sexpr};
 
     //#[test]
     #[allow(dead_code)]
     fn it_works() {
         let file = _REF;
-        let lexemes = log(file, lexer::process(file, true));
+        let lexemes = log(file, parser::step1_lex(file, true));
         //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(file)));
-        let (sexprs, args) = log(file, sexpr::process(&lexemes, file));
+        let (sexprs, args) = log(file, parser::step2_to_sexpr(&lexemes, file));
         //sexprs
         //    .iter()
         //    .enumerate()
         //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, file)));
-        let (ast, args, provides_for) = log(file, ast::process(&sexprs, &args));
+        let (ast, args, provides_for) = log(file, parser::step3_to_ast(&sexprs, &args));
         ast.iter().enumerate().for_each(|(i, t)| {
             println!(
                 "{:?} | {} -> {}",

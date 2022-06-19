@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::mem;
 
-use super::{Bindings, Dirty, DirtyValue, Func, MyError, PureResult, Value, Variables};
+use super::utility::concat;
+use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
 use crate::framework::Token;
-use crate::parser::ast::{Command, Label};
-use crate::parser::sexpr::Arg;
+use crate::parser::{Arg, Command, Label};
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -180,48 +180,5 @@ impl Command {
                 }
             }
         }
-    }
-}
-
-/******************************************************************************
- * In-built Commands
- ******************************************************************************/
-// Just joins its arguments into a string
-// Also doubles as the default push to the final knit
-pub fn concat<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
-    let mut buffer = String::with_capacity(recursive_calc_length(args)?);
-    recursive_concat::<V>(args, &mut buffer);
-    Ok(Value::String(buffer))
-}
-
-fn recursive_calc_length<V>(args: &[Value<V>]) -> Result<usize, MyError> {
-    let mut sum = 0;
-    for a in args {
-        sum += match a {
-            Value::Null => return Err("You left a null unprocessed"),
-            Value::Str(s) => s.len(),
-            Value::Char(c) => c.len_utf8(),
-            Value::Usize(x) => x.to_string().len(),
-            Value::String(s) => s.len(),
-            Value::Bool(b) => b.then(|| "true").unwrap_or("false").len(),
-            Value::List(l) => recursive_calc_length(l)?,
-            Value::Custom(_) => todo!(),
-        };
-    }
-    Ok(sum)
-}
-
-fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
-    for arg in args {
-        match arg {
-            Value::Null => unreachable!(),
-            Value::Str(s) => buffer.push_str(s),
-            Value::Char(c) => buffer.push(*c),
-            Value::Usize(x) => buffer.push_str(&x.to_string()),
-            Value::String(s) => buffer.push_str(s.as_str()),
-            Value::Bool(b) => buffer.push_str(b.then(|| "true").unwrap_or("false")),
-            Value::List(l) => recursive_concat(l, buffer),
-            Value::Custom(_) => todo!(),
-        };
     }
 }

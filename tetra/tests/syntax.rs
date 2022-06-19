@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use tetra::Token;
+use tetra::{parser, Token};
 
 fn unwrap<T, E: Display>(original: &str, result: Result<T, Token<E>>) -> T {
     match result {
@@ -15,21 +15,19 @@ fn unwrap<T, E: Display>(original: &str, result: Result<T, Token<E>>) -> T {
 }
 
 fn process(content: &str) -> String {
-    use tetra::parser::{lexer, sexpr, ast};
-
     //tetra::parse(content);
     let ctx = tetra::run::markup::default_context();
 
-    let lexemes = unwrap(content, lexer::process(content, true));
+    let lexemes = unwrap(content, parser::step1_lex(content, true));
     //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(content)));
 
-    let (sexprs, args) = unwrap(content, sexpr::process(&lexemes, content));
+    let (sexprs, args) = unwrap(content, parser::step2_to_sexpr(&lexemes, content));
     //sexprs
     //    .iter()
     //    .enumerate()
     //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, content)));
 
-    let (ast, args, _provides_for) = unwrap(content, ast::process(&sexprs, &args));
+    let (ast, args, _provides_for) = unwrap(content, parser::step3_to_ast(&sexprs, &args));
     //ast.iter().enumerate().for_each(|(i, t)| {
     //        println!(
     //            "{:?} | {} -> {}",
@@ -52,8 +50,6 @@ fn process(content: &str) -> String {
     //"".to_string()
 }
 
-
-
 #[test]
 fn edge_cases() {
     //let ctx = tetra::run::markup::default_context();
@@ -66,7 +62,7 @@ fn edge_cases() {
     assert_eq!(process("{| .; |} a"), "");
 }
 
-    const _REF: &str = r#"
+const _REF: &str = r#"
 {$ cite "@capper2012" $} the
 {$ cite "@margulis2004" $} quick brown
 {$ cite "[@steinfieldEtAl2012]" $} do
@@ -94,4 +90,3 @@ echo yo
 stuff
 
 "#;
-

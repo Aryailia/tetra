@@ -14,11 +14,11 @@ macro_rules! unwrap {
     };
 }
 
-pub mod executor;
+mod executor;
 pub mod markup;
+pub mod utility;
 
-use crate::parser::ast::Command;
-use crate::parser::sexpr::Arg;
+use crate::parser::{self, Arg, Command};
 use crate::Token;
 
 use std::collections::HashMap;
@@ -82,10 +82,9 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
     }
 
     pub fn compile(&self, original: &str) -> Result<String, Token<&'static str>> {
-        use crate::parser::{ast, lexer, sexpr};
-        let lexemes = lexer::process(original, true)?;
-        let (sexprs, args1) = sexpr::process(&lexemes, original)?;
-        let (ast, args2, _provides_for) = ast::process(&sexprs, &args1)?;
+        let lexemes = parser::step1_lex(original, true)?;
+        let (sexprs, args1) = parser::step2_to_sexpr(&lexemes, original)?;
+        let (ast, args2, _provides_for) = parser::step3_to_ast(&sexprs, &args1)?;
         self.run(&ast, &args2, original)
     }
 }
@@ -137,6 +136,7 @@ where
     }
 }
 
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::new_without_default))]
 impl<'a, K, V: Clone> Bindings<'a, K, V> {
     pub fn new() -> Self {
         Self {
