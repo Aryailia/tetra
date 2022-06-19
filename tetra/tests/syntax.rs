@@ -31,6 +31,15 @@ fn process(content: &str) -> String {
 
     let (ast, args, _provides_for) = unwrap(content, ast::process(&sexprs, &args));
     //ast.iter().enumerate().for_each(|(i, t)| {
+    //        println!(
+    //            "{:?} | {} -> {}",
+    //            &_provides_for[t.provides_for.0..t.provides_for.1],
+    //            t.to_display(&args, content),
+    //            i
+    //        )
+    //    });
+
+    //ast.iter().enumerate().for_each(|(i, t)| {
     //    println!(
     //        "{:?} | {} -> {}",
     //        &provides_for[t.provides_for.0..t.provides_for.1],
@@ -47,6 +56,9 @@ fn process(content: &str) -> String {
 
 #[test]
 fn edge_cases() {
+    //let ctx = tetra::run::markup::default_context();
+    //assert!(ctx.compile("") ==  Ok("".to_string()));
+
     assert_eq!(process(""), "");
     assert_eq!(process("a"), "a");
     assert_eq!(process("{| ; . |} a"), " a");

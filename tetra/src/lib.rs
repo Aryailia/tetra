@@ -36,9 +36,8 @@ mod tests {
     use super::*;
     use framework::{self, Token};
     use parser::{ast, lexer, sexpr};
-    use run::markup::{CustomKey, CustomValue};
 
-    #[test]
+    //#[test]
     #[allow(dead_code)]
     fn it_works() {
         let file = _REF;
@@ -59,10 +58,7 @@ mod tests {
             )
         });
         let ctx = run::markup::default_context();
-        let out = log(
-            file,
-            run::executor::run::<CustomKey, CustomValue>(&ctx, &ast, &args, file),
-        );
+        let out = log(file, ctx.run(&ast, &args, file));
         //println!("{}", out);
 
         if false {

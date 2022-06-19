@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem;
 
-use crate::framework::{Source, Token};
+use crate::framework::Token;
 use crate::parser::ast::{Command, Label};
 use crate::parser::sexpr::Arg;
 
@@ -106,8 +106,7 @@ impl Command {
 
 const ITERATION_LIMIT: usize = 1000;
 
-//pub fn run<'a, 'source, K, V: Clone>(
-pub fn run<'source, K, V: Clone>(
+fn run<'source, K, V: Clone>(
     ctx: &Bindings<K, V>,
     ast: &[Command],
     args: &[Token<Arg>],
@@ -222,20 +221,20 @@ enum Func<'a, CustomKey, CustomValue> {
     Stateful(&'a dyn StatefulFunction<CustomKey, CustomValue>),
 }
 
+pub type MyError = &'static str;
+pub type StatefulResult<'a, V> = Result<DirtyValue<'a, V>, MyError>;
+pub type PureResult<'a, V> = Result<Value<'a, V>, MyError>;
+
 #[derive(Clone, Debug)]
 pub enum Dirty {
     Waiting,
     Ready,
 }
 
-pub type MyError = &'static str;
-pub type StatefulResult<'a, V> = Result<DirtyValue<'a, V>, MyError>;
-pub type PureResult<'a, V> = Result<Value<'a, V>, MyError>;
-
 pub struct Bindings<'a, K, V> {
     functions: HashMap<&'a str, Func<'a, K, V>>,
 }
-impl<'a, K, V> Bindings<'a, K, V> {
+impl<'a, K, V: Clone> Bindings<'a, K, V> {
     pub fn new() -> Self {
         Self {
             functions: HashMap::new(),
@@ -257,6 +256,30 @@ impl<'a, K, V> Bindings<'a, K, V> {
         self.functions.insert(name, Func::Stateful(f));
     }
 }
+
+impl<'a, K, V: Clone> Bindings<'a, K, V> {
+    pub fn run<'source>(
+        &self,
+        ast: &[Command],
+        args: &[Token<Arg>],
+        original: &'source str,
+    ) -> Result<String, Token<&'static str>> {
+        run(self, ast, args, original)
+    }
+
+
+    pub fn compile(&self, original: &str) -> Result<String, Token<&'static str>> {
+        use crate::parser::{lexer, sexpr, ast};
+        let lexemes = lexer::process(original, true)?;
+        let (sexprs, args1) = sexpr::process(&lexemes, original)?;
+        let (ast, args2, _provides_for) = ast::process(&sexprs, &args1)?;
+        self.run(&ast, &args2, original)
+    }
+
+}
+
+
+
 
 pub trait PureFunction<V>: Sync + Send {
     fn call<'a>(&self, args: &[Value<'a, V>]) -> PureResult<'a, V>;

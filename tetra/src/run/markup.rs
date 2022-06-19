@@ -5,9 +5,6 @@ use std::io::Write;
 use std::process;
 use std::process::Stdio;
 
-use crate::framework::Token;
-use crate::parser::{sexpr::Arg, ast::Command};
-
 use super::executor::concat;
 use super::executor::{Bindings, Dirty, MyError, PureResult, StatefulResult, Value, Variables};
 
@@ -43,13 +40,6 @@ pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
     ctx.register_stateful_function("references", &references);
     ctx
 }
-
-impl<'a> Bindings<'a, CustomKey, CustomValue> {
-    pub fn run(&self, ast: &[Command], args: &[Token<Arg>], original: &str) -> Result<String, Token<&'static str>> {
-        super::executor::run(self, ast, args, original)
-    }
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
