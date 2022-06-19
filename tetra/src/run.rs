@@ -3,7 +3,7 @@ macro_rules! unwrap {
     (or_invalid $value:expr => $type:ident($x:ident) => $output:expr) => {
         match $value {
             Value::$type($x) => Ok($output),
-            _ => Err("Invalid type"),
+            _ => Err(Error::Generic("Invalid type".into())),
         }
     };
     (unreachable $value:expr => $type:ident($x:ident) => $output:expr) => {
@@ -18,16 +18,41 @@ mod executor;
 pub mod markup;
 pub mod utility;
 
+use crate::framework::Source;
 use crate::parser::{self, Arg, Command};
 use crate::Token;
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::borrow::Cow;
+
+////////////////////////////////////////////////////////////////////////////////
+
+pub enum Error {
+    Arg(usize, Cow<'static, str>), // Context will be cenetered on the arg indexed at `usize`
+    Generic(Cow<'static, str>), // Context will be the function
+    Contextless(Cow<'static, str>), // Do not print the context
+}
+
+
+impl Error {
+    // @TODO: consider whether to output Cow<str> or not
+    fn to_display(&self, original: &str, label: &Source, args: &[Token<Arg>]) -> String {
+        match self {
+            Error::Arg(i, s) => format!("{} {}", args[*i].source.get_context(original), s),
+            Error::Generic(s) => format!("{} {}", label.get_context(original), s),
+            Error::Contextless(s) => s.to_string(),
+        }
+    }
+}
+
+
+
+////////////////////////////////////////////////////////////////////////////////
 
 type DirtyValue<'a, CustomValue> = (Dirty, Value<'a, CustomValue>);
-pub type MyError = &'static str;
-pub type StatefulResult<'a, V> = Result<DirtyValue<'a, V>, MyError>;
-pub type PureResult<'a, V> = Result<Value<'a, V>, MyError>;
+pub type StatefulResult<'a, V> = Result<DirtyValue<'a, V>, Error>;
+pub type PureResult<'a, V> = Result<Value<'a, V>, Error>;
 
 #[derive(Clone, Debug)]
 pub enum Dirty {
@@ -77,14 +102,18 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
         ast: &[Command],
         args: &[Token<Arg>],
         original: &'source str,
-    ) -> Result<String, Token<&'static str>> {
+    ) -> Result<String, String> {
         executor::run(self, ast, args, original)
     }
 
-    pub fn compile(&self, original: &str) -> Result<String, Token<&'static str>> {
-        let lexemes = parser::step1_lex(original, true)?;
-        let (sexprs, args1) = parser::step2_to_sexpr(&lexemes, original)?;
-        let (ast, args2, _provides_for) = parser::step3_to_ast(&sexprs, &args1)?;
+    pub fn compile(&self, original: &str) -> Result<String, String> {
+        let (ast, args2, _provides_for) = parser::step1_lex(original, true)
+            .and_then(|lexemes| parser::step2_to_sexpr(&lexemes, original))
+            .and_then(|(sexprs, args1)| parser::step3_to_ast(&sexprs, &args1))
+            .map_err(|token| format!("{} {}", token.get_context(original), token.me))?;
+        //let lexemes = parser::step1_lex(original, true)?;
+        //let (sexprs, args1) = parser::step2_to_sexpr(&lexemes, original)?;
+        //let (ast, args2, _provides_for) = parser::step3_to_ast(&sexprs, &args1)?;
         self.run(&ast, &args2, original)
     }
 }

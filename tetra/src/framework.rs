@@ -1,22 +1,10 @@
 //run: cargo test -- --nocapture
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Source {
-    Range(usize, usize),
-}
-
-impl Source {
-    pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
-        match self {
-            Source::Range(start, close) => &original[*start..*close],
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct Token<T> {
-    pub source: Source,
-    pub me: T,
+macro_rules! len_utf8 {
+    ($char:expr => $size:literal) => {{
+        debug_assert_eq!($char.len_utf8(), $size);
+        $size
+    }};
 }
 
 macro_rules! build_exact_string {
@@ -32,37 +20,26 @@ macro_rules! build_exact_string {
     };
 }
 
-macro_rules! len_utf8 {
-    ($char:expr => $size:literal) => {{
-        debug_assert_eq!($char.len_utf8(), $size);
-        $size
-    }};
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Source {
+    Range(usize, usize),
 }
 
-impl<T> Token<T> {
-    pub fn new(me: T, source: Source) -> Self {
-        Token { source, me }
-    }
-
-    pub fn remap<U>(&self, new: U) -> Token<U> {
-        Token {
-            me: new,
-            source: self.source.clone(),
+impl Source {
+    pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
+        match self {
+            Source::Range(start, close) => &original[*start..*close],
         }
     }
 
-    pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
-        self.source.to_str(original)
-    }
-
     pub fn get_context(&self, original: &str) -> String {
-        match self.source {
+        match self {
             // This is mimicking the formatting Rust uses for compile errors
             Source::Range(start, close) => {
-                let (start, close) = if start < close {
-                    (start, close)
+                let (start, close) = if *start < *close {
+                    (*start, *close)
                 } else {
-                    (close, start)
+                    (*close, *start)
                 };
                 //let offset = original.as_ptr() as usize;
 
@@ -122,6 +99,33 @@ impl<T> Token<T> {
                 }
             }
         }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct Token<T> {
+    pub source: Source,
+    pub me: T,
+}
+
+impl<T> Token<T> {
+    pub fn new(me: T, source: Source) -> Self {
+        Token { source, me }
+    }
+
+    pub fn remap<U>(&self, new: U) -> Token<U> {
+        Token {
+            me: new,
+            source: self.source.clone(),
+        }
+    }
+
+    pub fn to_str<'a>(&self, original: &'a str) -> &'a str {
+        self.source.to_str(original)
+    }
+
+    pub fn get_context(&self, original: &str) -> String {
+        self.source.get_context(original)
     }
 }
 

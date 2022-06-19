@@ -250,6 +250,16 @@ pub enum Label {
     Ident(Source),  //
 }
 
+impl Label {
+    pub fn to_source(&self) -> &Source {
+        match self {
+            Label::Assign(s) => s,
+            Label::Display => todo!(),
+            Label::Ident(s) => s,
+        }
+    }
+}
+
 impl Command {
     //#[Config(debug)]
     pub fn to_display(&self, args: &[Token<Arg>], source: &str) -> String {

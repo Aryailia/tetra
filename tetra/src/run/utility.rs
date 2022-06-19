@@ -4,43 +4,13 @@
 
 //run: cargo test -- --nocapture
 
+use std::borrow::Cow;
 use std::io::Write;
 use std::process;
 use std::process::Stdio;
 
-use super::{MyError, PureResult, Value};
+use super::{Error, PureResult, Value};
 
-pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
-    if args.len() > 2 {
-        //println!("len {}", args.len());
-        todo!("temp panic for when we put actual error handling");
-    }
-
-    //let lang = unwrap!(or_invalid args[0] => String(x) | Str(x) => x);
-    let lang: &str = match &args[0] {
-        Value::String(x) => x,
-        Value::Str(x) => x,
-        _ => return Err("Invalid type"),
-    };
-    let cell_body: &str = match &args[1] {
-        Value::String(x) => x,
-        Value::Str(x) => x,
-        _ => return Err("Invalid type"),
-    };
-
-    match lang {
-        "r" => {
-            println!("markup.rs: Running r");
-        }
-        "graphviz" | "dot" => {
-            return run_command("dot", Some(cell_body), &["-Tsvg"]).map(Value::String)
-        }
-        "sh" => println!("markup.rs: Running shell"),
-        s => todo!("markup.rs: {}", s),
-    }
-
-    Ok(Value::String("".to_string()))
-}
 /******************************************************************************
  * In-built Commands
  ******************************************************************************/
@@ -56,11 +26,11 @@ pub fn concat<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     Ok(Value::String(buffer))
 }
 
-fn recursive_calc_length<V>(args: &[Value<V>]) -> Result<usize, MyError> {
+fn recursive_calc_length<V>(args: &[Value<V>]) -> Result<usize, Error> {
     let mut sum = 0;
-    for a in args {
+    for (i, a) in args.iter().enumerate() {
         sum += match a {
-            Value::Null => return Err("You left a null unprocessed"),
+            Value::Null => return Err(Error::Arg(i, "You left a null unprocessed".into())),
             Value::Str(s) => s.len(),
             Value::Char(c) => c.len_utf8(),
             Value::Usize(x) => x.to_string().len(),
@@ -89,12 +59,46 @@ fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// code
+pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+    if args.len() > 2 {
+        //println!("len {}", args.len());
+        todo!("temp panic for when we put actual error handling");
+    }
+
+    //let lang = unwrap!(or_invalid args[0] => String(x) | Str(x) => x);
+    let lang: &str = match &args[0] {
+        Value::String(x) => x,
+        Value::Str(x) => x,
+        _ => return Err(Error::Arg(0, "Invalid type".into())),
+    };
+    let cell_body: &str = match &args[1] {
+        Value::String(x) => x,
+        Value::Str(x) => x,
+        _ => return Err(Error::Arg(1, "Invalid type".into())),
+    };
+
+    match lang {
+        "r" => {
+            println!("markup.rs: Running r");
+        }
+        "graphviz" | "dot" => {
+            return run_command("dot", Some(cell_body), &["-Tsvg"]).map(Value::String)
+        }
+        "sh" => println!("markup.rs: Running shell"),
+        s => todo!("markup.rs: {}", s),
+    }
+
+    Ok(Value::String("".to_string()))
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // env
 pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     let name: &str = match &args[0] {
         Value::Str(s) => s,
         Value::String(s) => s,
-        _ => return Err("Invalid type, expecting string"),
+        _ => return Err(Error::Arg(0, "Invalid type, expecting string".into())),
     };
     fetch_env_var(name).map(Value::String)
 }
@@ -103,7 +107,7 @@ pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
  * Helpers
  ******************************************************************************/
 
-pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<String, MyError> {
+pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<String, Error> {
     let child = if let Some(s) = stdin {
         let mut child = process::Command::new(program)
             .args(args)
@@ -137,9 +141,11 @@ pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<
     }
 }
 
-pub fn fetch_env_var(key: &str) -> Result<String, MyError> {
+pub fn fetch_env_var(key: &str) -> Result<String, Error> {
     Ok(std::env::vars()
         .find(|(k, _)| k == key)
-        .ok_or("Missing BIBLIOGRAPHY environment variable")?
+        .ok_or(Error::Generic(Cow::Borrowed(
+            "Missing BIBLIOGRAPHY environment variable",
+        )))?
         .1)
 }

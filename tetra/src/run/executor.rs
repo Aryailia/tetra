@@ -23,7 +23,7 @@ pub fn run<'source, K, V: Clone>(
     ast: &[Command],
     args: &[Token<Arg>],
     original: &'source str,
-) -> Result<String, Token<&'static str>> {
+) -> Result<String, String> {
     let mut internal: HashMap<&str, Value<'source, V>> = HashMap::new();
     let mut external = Variables {
         bindings: HashMap::new(),
@@ -62,7 +62,10 @@ pub fn run<'source, K, V: Clone>(
                     debug_assert_eq!(2, bindings.len());
 
                     if ctx.functions.get(name).is_some() {
-                        return Err(Token::new("A function with this name already exists. Choose a different name for this variable.", lvalue.source.clone()));
+                        return Err(format!("{} {}",
+                                lvalue.source.get_context(original),
+                                "A function with this name already exists. Choose a different name for this variable."
+                                ));
                     }
 
                     // @TODO: Should this be cloned?
@@ -81,24 +84,36 @@ pub fn run<'source, K, V: Clone>(
                         let output = match func {
                             Func::Pure(f) => (
                                 Dirty::Ready,
-                                f.call(bindings).map_err(|err| Token::new(err, s.clone()))?,
+                                f.call(bindings).map_err(|err| {
+                                    err.to_display(original, s, &args[cmd.args.0..cmd.args.1])
+                                })?,
                             ),
                             Func::Stateful(f) => {
                                 let old_output = mem::replace(&mut outputs[i].1, Value::Null);
-                                f.call(bindings, old_output, &mut external)
-                                    .map_err(|err| Token::new(err, s.clone()))?
+                                f.call(bindings, old_output, &mut external).map_err(|err| {
+                                    err.to_display(original, s, &args[cmd.args.0..cmd.args.1])
+                                })?
                             }
                         };
                         outputs[i] = output;
                         //outputs[i] = (Dirty::Ready, Value::Str("|"));
                     } else {
-                        return Err(Token::new("No function or variable named this.", s.clone()));
+                        return Err(format!(
+                            "{} {}",
+                            s.get_context(original),
+                            "No function or variable named this.",
+                        ));
                     }
                 }
                 Label::Display => {
                     // @TODO: have errors return which argument is bad
-                    let output = concat(&binded_args[cmd.args.0..cmd.args.1])
-                        .map_err(|e| Token::new(e, args[cmd.args.0].source.clone()))?;
+                    let output = concat(bindings).map_err(|e| {
+                        e.to_display(
+                            original,
+                            cmd.label.to_source(),
+                            &args[cmd.args.0..cmd.args.1],
+                        )
+                    })?;
                     outputs[i] = (Dirty::Ready, output);
                 }
             }

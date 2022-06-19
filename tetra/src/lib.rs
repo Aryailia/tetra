@@ -57,7 +57,13 @@ mod tests {
             )
         });
         let ctx = run::markup::default_context();
-        let out = log(file, ctx.run(&ast, &args, file));
+        let out = match ctx.run(&ast, &args, file) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
+        };
         //println!("{}", out);
 
         if false {

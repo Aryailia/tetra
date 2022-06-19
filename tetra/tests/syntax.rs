@@ -46,7 +46,13 @@ fn process(content: &str) -> String {
     //    )
     //});
 
-    unwrap(content, ctx.run(&ast, &args, content))
+    match ctx.run(&ast, &args, content) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    }
     //"".to_string()
 }
 

@@ -6,7 +6,7 @@
 
 // Do not use super so that if others want to make their own flavour, they
 // can copy this file without issue
-use crate::run::{Bindings, Dirty, MyError, PureResult, StatefulResult};
+use crate::run::{Bindings, Dirty, Error, PureResult, StatefulResult};
 use crate::run::{Value, Variables};
 
 use crate::run::utility::{code, concat, env};
@@ -159,7 +159,7 @@ fn references<'a>(
 }
 
 
-pub fn pandoc_cite(citekey: &str) -> Result<String, MyError> {
+pub fn pandoc_cite(citekey: &str) -> Result<String, Error> {
     let bibliography = fetch_env_var("BIBLIOGRAPHY")?;
     let citation = run_command(
         "pandoc",
