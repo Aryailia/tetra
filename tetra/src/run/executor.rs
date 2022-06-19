@@ -1,25 +1,13 @@
 //run: cargo test -- --nocapture
 
 use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hash;
 use std::mem;
+
+use super::{Bindings, Dirty, DirtyValue, Func, MyError, PureResult, Value, Variables};
 
 use crate::framework::Token;
 use crate::parser::ast::{Command, Label};
 use crate::parser::sexpr::Arg;
-
-#[derive(Clone, Debug)]
-pub enum Value<'source, CustomValue> {
-    Null,
-    Str(&'source str),
-    Usize(usize),
-    Char(char),
-    String(String),
-    Bool(bool),
-    List(Vec<Value<'source, CustomValue>>),
-    Custom(CustomValue),
-}
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -28,85 +16,9 @@ pub enum Value<'source, CustomValue> {
 //    User(CustomKey), // User defined keys (make sure to impl Hash)
 //}
 
-pub struct Variables<'source, CustomKey, CustomValue> {
-    bindings: HashMap<CustomKey, Value<'source, CustomValue>>,
-}
-impl<'a, K: Eq + Hash, V> Variables<'a, K, V> {
-    pub fn get(&self, key: &K) -> Option<&Value<'a, V>> {
-        self.bindings.get(key)
-    }
-
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut Value<'a, V>> {
-        self.bindings.get_mut(key)
-    }
-    pub fn insert(&mut self, key: K, value: Value<'a, V>) -> Option<Value<'a, V>> {
-        self.bindings.insert(key, value)
-    }
-}
-
-type DirtyValue<'a, CustomValue> = (Dirty, Value<'a, CustomValue>);
-
-impl Command {
-    fn reverse_dependant_count(&self) -> usize {
-        self.provides_for.1 - self.provides_for.0
-    }
-
-    // The reason we separate out init from load step is because we have to loop
-    // several times if there are stateful commands, repeating the load half
-    // Also rust is RAII, so
-    fn init_args<'a, V>(
-        &self,
-        original: &'a str,
-        args: &[Token<Arg>],
-        bindings: &mut Vec<Value<'a, V>>,
-    ) {
-        for arg in &args[self.args.0..self.args.1] {
-            bindings.push(match arg.me {
-                Arg::Str => Value::Str(arg.to_str(original)),
-                Arg::Char(c) => Value::Char(c),
-                Arg::Reference(_) => Value::Null,
-                //Arg::Reference
-                Arg::Ident => Value::Null, // First arg of assign is the only place
-                Arg::IdentFunc | Arg::Assign | Arg::Stdin => unreachable!(),
-            });
-        }
-    }
-
-    fn are_args_ready<V>(&self, args: &[Token<Arg>], outputs: &Vec<DirtyValue<V>>) -> bool {
-        let mut is_ready = true;
-        for arg in &args[self.args.0..self.args.1] {
-            if let Arg::Reference(j) = arg.me {
-                is_ready &= matches!(outputs[j].0, Dirty::Ready);
-            }
-        }
-        is_ready
-    }
-    fn load_args<'a, V: Clone>(
-        &self,
-        ast: &[Command],
-        args: &[Token<Arg>],
-        bindings: &mut Vec<Value<'a, V>>,
-        outputs: &mut Vec<DirtyValue<'a, V>>,
-    ) {
-        let start = self.args.0;
-        for (i, arg) in args[start..self.args.1].iter().enumerate() {
-            if let Arg::Reference(j) = arg.me {
-                // If {outputs[j]} has no dependents, we can just steal it
-                bindings[start + i] = if ast[j].reverse_dependant_count() == 0 {
-                    mem::replace(&mut outputs[j].1, Value::Null)
-
-                // Otherwise we have to clone
-                } else {
-                    outputs[j].1.clone()
-                }
-            }
-        }
-    }
-}
-
 const ITERATION_LIMIT: usize = 1000;
 
-fn run<'source, K, V: Clone>(
+pub fn run<'source, K, V: Clone>(
     ctx: &Bindings<K, V>,
     ast: &[Command],
     args: &[Token<Arg>],
@@ -116,10 +28,10 @@ fn run<'source, K, V: Clone>(
     let mut external = Variables {
         bindings: HashMap::new(),
     };
-    let mut outputs: Vec<(Dirty, Value<'source, V>)> = Vec::with_capacity(ast.len());
+    let mut outputs: Vec<DirtyValue<'source, V>> = Vec::with_capacity(ast.len());
     let mut binded_args = Vec::with_capacity(args.len());
 
-    debug_assert!(ast.len() >= 1);
+    debug_assert!(!ast.is_empty());
     for cmd in ast.iter() {
         cmd.init_args(original, args, &mut binded_args);
         //if let Label::Assign(_) = cmd.label {
@@ -210,112 +122,64 @@ fn run<'source, K, V: Clone>(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Helper functions
 
-////////////////////////////////////////////////////////////////////////////////
+impl Command {
+    fn reverse_dependant_count(&self) -> usize {
+        self.provides_for.1 - self.provides_for.0
+    }
 
-// Custom Functions
-// {K} is a custom key enum, {V} is a custom value enum
-
-enum Func<'a, CustomKey, CustomValue> {
-    Pure(&'a dyn PureFunction<CustomValue>),
-    Stateful(&'a dyn StatefulFunction<CustomKey, CustomValue>),
-}
-
-pub type MyError = &'static str;
-pub type StatefulResult<'a, V> = Result<DirtyValue<'a, V>, MyError>;
-pub type PureResult<'a, V> = Result<Value<'a, V>, MyError>;
-
-#[derive(Clone, Debug)]
-pub enum Dirty {
-    Waiting,
-    Ready,
-}
-
-pub struct Bindings<'a, K, V> {
-    functions: HashMap<&'a str, Func<'a, K, V>>,
-}
-impl<'a, K, V: Clone> Bindings<'a, K, V> {
-    pub fn new() -> Self {
-        Self {
-            functions: HashMap::new(),
+    // The reason we separate out init from load step is because we have to loop
+    // several times if there are stateful commands, repeating the load half
+    // Also rust is RAII, so
+    fn init_args<'a, V>(
+        &self,
+        original: &'a str,
+        args: &[Token<Arg>],
+        bindings: &mut Vec<Value<'a, V>>,
+    ) {
+        for arg in &args[self.args.0..self.args.1] {
+            bindings.push(match arg.me {
+                Arg::Str => Value::Str(arg.to_str(original)),
+                Arg::Char(c) => Value::Char(c),
+                Arg::Reference(_) => Value::Null,
+                //Arg::Reference
+                Arg::Ident => Value::Null, // First arg of assign is the only place
+                Arg::IdentFunc | Arg::Assign | Arg::Stdin => unreachable!(),
+            });
         }
     }
-    pub fn register_pure_function<F: PureFunction<V> + 'static>(
-        &mut self,
-        name: &'a str,
-        f: &'a F,
-    ) {
-        self.functions.insert(name, Func::Pure(f));
+
+    fn are_args_ready<V>(&self, args: &[Token<Arg>], outputs: &[DirtyValue<V>]) -> bool {
+        let mut is_ready = true;
+        for arg in &args[self.args.0..self.args.1] {
+            if let Arg::Reference(j) = arg.me {
+                is_ready &= matches!(outputs[j].0, Dirty::Ready);
+            }
+        }
+        is_ready
     }
 
-    pub fn register_stateful_function<F: StatefulFunction<K, V> + 'static>(
-        &mut self,
-        name: &'a str,
-        f: &'a F,
-    ) {
-        self.functions.insert(name, Func::Stateful(f));
-    }
-}
-
-impl<'a, K, V: Clone> Bindings<'a, K, V> {
-    pub fn run<'source>(
+    fn load_args<'a, V: Clone>(
         &self,
         ast: &[Command],
         args: &[Token<Arg>],
-        original: &'source str,
-    ) -> Result<String, Token<&'static str>> {
-        run(self, ast, args, original)
-    }
+        bindings: &mut [Value<'a, V>],
+        outputs: &mut [DirtyValue<'a, V>],
+    ) {
+        let start = self.args.0;
+        for (i, arg) in args[start..self.args.1].iter().enumerate() {
+            if let Arg::Reference(j) = arg.me {
+                // If {outputs[j]} has no dependents, we can just steal it
+                bindings[start + i] = if ast[j].reverse_dependant_count() == 0 {
+                    mem::replace(&mut outputs[j].1, Value::Null)
 
-
-    pub fn compile(&self, original: &str) -> Result<String, Token<&'static str>> {
-        use crate::parser::{lexer, sexpr, ast};
-        let lexemes = lexer::process(original, true)?;
-        let (sexprs, args1) = sexpr::process(&lexemes, original)?;
-        let (ast, args2, _provides_for) = ast::process(&sexprs, &args1)?;
-        self.run(&ast, &args2, original)
-    }
-
-}
-
-
-
-
-pub trait PureFunction<V>: Sync + Send {
-    fn call<'a>(&self, args: &[Value<'a, V>]) -> PureResult<'a, V>;
-}
-
-impl<F, V> PureFunction<V> for F
-where
-    F: for<'a> Fn(&[Value<'a, V>]) -> PureResult<'a, V> + Sync + Send,
-{
-    fn call<'a>(&self, args: &[Value<'a, V>]) -> PureResult<'a, V> {
-        self(args)
-    }
-}
-
-pub trait StatefulFunction<K, V>: Sync + Send {
-    fn call<'a>(
-        &self,
-        args: &[Value<'a, V>],
-        old_output: Value<'a, V>,
-        storage: &mut Variables<'a, K, V>,
-    ) -> StatefulResult<'a, V>;
-}
-
-impl<F, K, V> StatefulFunction<K, V> for F
-where
-    F: for<'a> Fn(&[Value<'a, V>], Value<'a, V>, &mut Variables<'a, K, V>) -> StatefulResult<'a, V>
-        + Sync
-        + Send,
-{
-    fn call<'a>(
-        &self,
-        args: &[Value<'a, V>],
-        old_output: Value<'a, V>,
-        storage: &mut Variables<'a, K, V>,
-    ) -> StatefulResult<'a, V> {
-        self(args, old_output, storage)
+                // Otherwise we have to clone
+                } else {
+                    outputs[j].1.clone()
+                }
+            }
+        }
     }
 }
 
@@ -361,4 +225,3 @@ fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
         };
     }
 }
-

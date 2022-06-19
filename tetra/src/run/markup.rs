@@ -6,7 +6,8 @@ use std::process;
 use std::process::Stdio;
 
 use super::executor::concat;
-use super::executor::{Bindings, Dirty, MyError, PureResult, StatefulResult, Value, Variables};
+use super::{Bindings, Dirty, MyError, PureResult, StatefulResult};
+use super::{Value, Variables};
 
 //impl Default for Bindings<'_, CustomKey, CustomValue>  {
 //    fn default() -> Self {
@@ -55,7 +56,6 @@ pub enum CustomValue {
     Citation(usize),
 }
 
-
 pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     if args.len() > 2 {
         //println!("len {}", args.len());
@@ -79,11 +79,7 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
             println!("markup.rs: Running r");
         }
         "graphviz" | "dot" => {
-            return run_command(
-                "dot",
-                Some(cell_body),
-                &["-Tsvg"],
-            ).map(Value::String)
+            return run_command("dot", Some(cell_body), &["-Tsvg"]).map(Value::String)
         }
         "sh" => println!("markup.rs: Running shell"),
         s => todo!("markup.rs: {}", s),
@@ -92,7 +88,6 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     Ok(Value::String("".to_string()))
 }
 
-
 //fn code<'a>(
 //    args: &[Value<'a, CustomValue>],
 //    old_output: Value<'a, CustomValue>,
@@ -100,7 +95,6 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 //) -> StatefulResult<'a, CustomValue> {
 //    Ok((Dirty::Waiting, Value::String("".to_string())))
 //}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 fn cite<'a>(
@@ -208,12 +202,7 @@ fn references<'a>(
 
             let citerefs = storage.get_mut(&CustomKey::Citations).unwrap();
             let citerefs = unwrap!(unreachable citerefs => String(s) => s);
-            let ref_start = citerefs
-                .split("\n\n")
-                .skip(cite_count)
-                .next()
-                .unwrap()
-                .as_ptr();
+            let ref_start = citerefs.split("\n\n").nth(cite_count).unwrap().as_ptr();
             let references = &citerefs[ref_start as usize - citerefs.as_ptr() as usize..];
 
             Ok((Dirty::Ready, Value::String(references.to_string())))
@@ -230,7 +219,6 @@ pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     };
     fetch_env_var(name).map(Value::String)
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 
