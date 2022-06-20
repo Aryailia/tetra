@@ -1,14 +1,14 @@
 //run: cargo test -- --nocapture
 macro_rules! unwrap {
-    (or_invalid $value:expr => $type:ident($x:ident) => $output:expr) => {
+    (or_invalid $value:expr => $variant:pat => $output:expr) => {
         match $value {
-            Value::$type($x) => Ok($output),
+            $variant => Ok($output),
             _ => Err(Error::Generic("Invalid type".into())),
         }
     };
-    (unreachable $value:expr => $type:ident($x:ident) => $output:expr) => {
+    (unreachable $value:expr => $variant:pat => $output:expr) => {
         match $value {
-            Value::$type($x) => $output,
+            $variant => $output,
             _ => unreachable!(),
         }
     };
@@ -22,22 +22,23 @@ use crate::framework::Source;
 use crate::parser::{self, Arg, Command};
 use crate::Token;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::borrow::Cow;
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
 pub enum Error {
     Arg(usize, Cow<'static, str>), // Context will be cenetered on the arg indexed at `usize`
-    Generic(Cow<'static, str>), // Context will be the function
+    Generic(Cow<'static, str>),    // Context will be the function
     Contextless(Cow<'static, str>), // Do not print the context
 }
-
 
 impl Error {
     // @TODO: consider whether to output Cow<str> or not
     fn to_display(&self, original: &str, label: &Source, args: &[Token<Arg>]) -> String {
+        println!("{:?} {:?}", args, self);
         match self {
             Error::Arg(i, s) => format!("{} {}", args[*i].source.get_context(original), s),
             Error::Generic(s) => format!("{} {}", label.get_context(original), s),
@@ -47,6 +48,62 @@ impl Error {
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+
+// This mirrors the behaviour of `std::mem::discriminant()`
+// But this automates mapping discriminants back into `str`
+macro_rules! define_value {
+    (const $const:ident = enum $enum:ident: $repr:ty {
+        $($variant_id:ident = $variant:ident $(($type:ty))? , )*
+    }) => {
+        type ValueRepr = $repr;
+
+        #[derive(Clone, Debug)]
+        #[repr($repr)]
+        pub enum $enum<'source, CustomValue> {
+            $($variant $(($type))*, )*
+        }
+
+        pub mod value {
+            define_value!{ @consts $repr {0} $($variant_id)* }
+        }
+        // Just defines a bunch of
+        // `const NULL = 0`
+        // `const STR = 1` etc.
+        // for each {$variant_id} but automatically increments the r-value
+
+        impl<'source, CustomValue> $enum<'source, CustomValue> {
+            pub fn tag(&self) -> $repr {
+                unsafe { *(self as *const Self as *const $repr) }
+            }
+        }
+
+        const VALUE_VARIANT_COUNT: usize = 0 $( + define_value!(@count $variant) )*;
+
+        const $const: [&'static str; VALUE_VARIANT_COUNT] = [
+            $( stringify!($variant), )*
+        ];
+        //#[test]
+        //fn check_variant_matches_debug_str
+    };
+
+    // tt-muncher pattern to count the {$name}
+    (@consts $repr:ty { $index:expr } $name:ident $($($tt:tt)+)?) => {
+        pub const $name: $repr = $index;
+        $( define_value!{ @consts $repr { $index + 1 } $($tt)* })*
+    };
+    (@count $_:tt) => { 1 };
+}
+
+define_value!{ const VALUE_AS_STR = enum Value: u8 {
+    NULL   = Null,
+    TEXT   = Text(Cow<'source, str>),
+    USIZE  = Usize(usize),
+    CHAR   = Char(char),
+    BOOL   = Bool(bool),
+    LIST   = List(Vec<Value<'source, CustomValue>>),
+    CUSTOM = Custom(CustomValue),
+}}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -58,18 +115,6 @@ pub type PureResult<'a, V> = Result<Value<'a, V>, Error>;
 pub enum Dirty {
     Waiting,
     Ready,
-}
-
-#[derive(Clone, Debug)]
-pub enum Value<'source, CustomValue> {
-    Null,
-    Str(&'source str),
-    Usize(usize),
-    Char(char),
-    String(String),
-    Bool(bool),
-    List(Vec<Value<'source, CustomValue>>),
-    Custom(CustomValue),
 }
 
 // {Variables} is used by user-defined functions and by the executor internally
@@ -92,16 +137,30 @@ impl<'a, K: Eq + Hash, V> Variables<'a, K, V> {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Main context
 pub struct Bindings<'a, K, V> {
     functions: HashMap<&'a str, Func<'a, K, V>>,
+    parameters: Vec<ValueRepr>,
 }
 
+pub const LIMITED: bool = true;
+pub const UNLIMITED: bool = false;
+
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::new_without_default))]
 impl<'a, K, V: Clone> Bindings<'a, K, V> {
-    pub fn run<'source>(
+    pub fn new() -> Self {
+        Self {
+            functions: HashMap::new(),
+            parameters: Vec::new(),
+        }
+    }
+
+    pub fn run(
         &self,
         ast: &[Command],
         args: &[Token<Arg>],
-        original: &'source str,
+        original: &str,
     ) -> Result<String, String> {
         executor::run(self, ast, args, original)
     }
@@ -116,6 +175,52 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
         //let (ast, args2, _provides_for) = parser::step3_to_ast(&sexprs, &args1)?;
         self.run(&ast, &args2, original)
     }
+
+    pub fn register_pure_function<F: PureFunction<V> + 'static>(
+        &mut self,
+        name: &'a str,
+        f: &'a F,
+        limit_args: bool,
+        parameters: &[ValueRepr],
+    ) {
+        let len = parameters.len();
+        self.parameters.extend(parameters);
+
+        self.functions.insert(
+            name,
+            Func::Pure(f, ParamDef {
+                parameters: (len, self.parameters.len()),
+                arg_count: if limit_args == LIMITED {
+                    (len, len)
+                } else {
+                    (0, usize::MAX)
+                },
+            }),
+        );
+    }
+
+    pub fn register_stateful_function<F: StatefulFunction<K, V> + 'static>(
+        &mut self,
+        name: &'a str,
+        f: &'a F,
+        limit_args: bool,
+        parameters: &[ValueRepr],
+    ) {
+        let len = parameters.len();
+        self.parameters.extend(parameters);
+
+        self.functions.insert(
+            name,
+            Func::Stateful(f, ParamDef {
+                parameters: (len, self.parameters.len()),
+                arg_count: if limit_args == LIMITED {
+                    (len, len)
+                } else {
+                    (0, usize::MAX)
+                },
+            }),
+        );
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -123,18 +228,81 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
 // {K} is a custom key enum, {V} is a custom value enum
 
 enum Func<'a, K, V> {
-    Pure(&'a dyn PureFunction<V>),
-    Stateful(&'a dyn StatefulFunction<K, V>),
+    Pure(&'a dyn PureFunction<V>, ParamDef),
+    Stateful(&'a dyn StatefulFunction<K, V>, ParamDef),
 }
 
+struct ParamDef {
+    parameters: (usize, usize),
+    arg_count: (usize, usize),
+}
+
+// @TODO: check is excuted on every iteration, it might be possible to check
+//        only once if the arguments have not changed
+impl ParamDef {
+    fn check_args<V>(
+        &self,
+        all_params: &[ValueRepr],
+        args: &[Value<V>],
+    ) -> Result<(), Error> {
+        let parameters = &all_params[self.parameters.0..self.parameters.1];
+        //println!("{:?} {:?} {:?}", all_params, self.arg_count, self.parameters);
+
+        if args.len() < self.arg_count.0 {
+            return Err(args.len()
+                .checked_sub(1)
+                .map(|i| Error::Arg(i, Cow::Borrowed("Need an argument after this")))
+
+                // Give label context if no args
+                .unwrap_or(Error::Generic(Cow::Borrowed("Missing an argument"))));
+        } else if args.len() > self.arg_count.1 {
+            //match &args[1] {
+            //    Value::Null => println!("Missing: Null"),
+            //    Value::Str(s) => println!("Missing: {:?}", s),
+            //    Value::String(s) => println!("Missing: {:?}", s),
+            //    Value::String(s) => println!("Missing: {:?}", s),
+            //    Value::Usize(s) => println!("Missing: {:?}", s),
+            //    Value::Char(s) => println!("Missing: {:?}", s),
+            //    Value::String(s) => println!("Missing: {:?}", s),
+            //    Value::Bool(s) => println!("Missing: {:?}", s),
+            //    Value::List(_) => todo!(),
+            //    Value::Custom(_) => todo!(),
+            //}
+            return Err(args.len()
+                .checked_sub(1)
+                .map(|i| Error::Arg(i, Cow::Borrowed("Unexpected argument")))
+                // Give to label context if no args
+                .unwrap_or(Error::Generic(Cow::Borrowed("Unexpected argument"))));
+        } else {
+            for (i, (a1, a2)) in parameters.iter().zip(args.iter()).enumerate() {
+                if *a1 != a2.tag() {
+                    return Err(Error::Arg(i, Cow::Owned(format!(
+                        "is a value of type {}. Expected a {}",
+                        VALUE_AS_STR[*a1 as usize],
+                        VALUE_AS_STR[a2.tag() as usize],
+                    ))));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// This mirrors how the the definitions of the user-defined functions should
+// look like as well, (i.e. this are the parameters they should have).
+// See 'markup.rs' for more explicit example
 pub trait PureFunction<V>: Sync + Send {
     fn call<'a>(&self, args: &[Value<'a, V>]) -> PureResult<'a, V>;
 }
 
+// Ditto 'PureFunction<V>'
 pub trait StatefulFunction<K, V>: Sync + Send {
     fn call<'a>(
         &self,
         args: &[Value<'a, V>],
+        // This is the value that the previous epoch/iteration call of this
+        // function outputted it.
+        // On the first iteration, this defaults to Value::Null
         old_output: Value<'a, V>,
         storage: &mut Variables<'a, K, V>,
     ) -> StatefulResult<'a, V>;
@@ -162,29 +330,5 @@ where
         storage: &mut Variables<'a, K, V>,
     ) -> StatefulResult<'a, V> {
         self(args, old_output, storage)
-    }
-}
-
-#[cfg_attr(feature = "cargo-clippy", allow(clippy::new_without_default))]
-impl<'a, K, V: Clone> Bindings<'a, K, V> {
-    pub fn new() -> Self {
-        Self {
-            functions: HashMap::new(),
-        }
-    }
-    pub fn register_pure_function<F: PureFunction<V> + 'static>(
-        &mut self,
-        name: &'a str,
-        f: &'a F,
-    ) {
-        self.functions.insert(name, Func::Pure(f));
-    }
-
-    pub fn register_stateful_function<F: StatefulFunction<K, V> + 'static>(
-        &mut self,
-        name: &'a str,
-        f: &'a F,
-    ) {
-        self.functions.insert(name, Func::Stateful(f));
     }
 }

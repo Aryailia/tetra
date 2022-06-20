@@ -59,7 +59,11 @@ impl Source {
                 let row_number = row_number.to_string();
                 let arrow_count = original[start..close].len();
                 let arrow_count = std::cmp::max(arrow_count, 1);
-                debug_assert!(line.find('\n').is_none());
+
+                if line.find('\n').is_some() {
+                    todo!("Multiline string error\n    {:?}\n", line.lines().next());
+                }
+                //debug_assert!(line.find('\n').is_none());
 
                 build_exact_string! { buffer,
                     // First line

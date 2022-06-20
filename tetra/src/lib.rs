@@ -1,7 +1,8 @@
 //run: cargo test -- --nocapture
 
 #![allow(dead_code)]
-#![feature(let_chains)]
+//#![feature(let_chains)]
+#![feature(arbitrary_enum_discriminant)]
 
 #[macro_use]
 mod framework;
@@ -64,7 +65,7 @@ mod tests {
                 std::process::exit(1);
             }
         };
-        //println!("{}", out);
+        println!("{}", out);
 
         if false {
             use std::io::Write;

@@ -23,7 +23,7 @@ use super::{Error, PureResult, Value};
 pub fn concat<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     let mut buffer = String::with_capacity(recursive_calc_length(args)?);
     recursive_concat::<V>(args, &mut buffer);
-    Ok(Value::String(buffer))
+    Ok(Value::Text(Cow::Owned(buffer)))
 }
 
 fn recursive_calc_length<V>(args: &[Value<V>]) -> Result<usize, Error> {
@@ -31,10 +31,9 @@ fn recursive_calc_length<V>(args: &[Value<V>]) -> Result<usize, Error> {
     for (i, a) in args.iter().enumerate() {
         sum += match a {
             Value::Null => return Err(Error::Arg(i, "You left a null unprocessed".into())),
-            Value::Str(s) => s.len(),
+            Value::Text(s) => s.len(),
             Value::Char(c) => c.len_utf8(),
             Value::Usize(x) => x.to_string().len(),
-            Value::String(s) => s.len(),
             Value::Bool(b) => b.then(|| "true").unwrap_or("false").len(),
             Value::List(l) => recursive_calc_length(l)?,
             Value::Custom(_) => todo!(),
@@ -47,10 +46,9 @@ fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
     for arg in args {
         match arg {
             Value::Null => unreachable!(),
-            Value::Str(s) => buffer.push_str(s),
+            Value::Text(s) => buffer.push_str(s),
             Value::Char(c) => buffer.push(*c),
             Value::Usize(x) => buffer.push_str(&x.to_string()),
-            Value::String(s) => buffer.push_str(s.as_str()),
             Value::Bool(b) => buffer.push_str(b.then(|| "true").unwrap_or("false")),
             Value::List(l) => recursive_concat(l, buffer),
             Value::Custom(_) => todo!(),
@@ -68,13 +66,11 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 
     //let lang = unwrap!(or_invalid args[0] => String(x) | Str(x) => x);
     let lang: &str = match &args[0] {
-        Value::String(x) => x,
-        Value::Str(x) => x,
+        Value::Text(x) => x,
         _ => return Err(Error::Arg(0, "Invalid type".into())),
     };
     let cell_body: &str = match &args[1] {
-        Value::String(x) => x,
-        Value::Str(x) => x,
+        Value::Text(x) => x,
         _ => return Err(Error::Arg(1, "Invalid type".into())),
     };
 
@@ -83,24 +79,25 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
             println!("markup.rs: Running r");
         }
         "graphviz" | "dot" => {
-            return run_command("dot", Some(cell_body), &["-Tsvg"]).map(Value::String)
+            return run_command("dot", Some(cell_body), &["-Tsvg"])
+                .map(Cow::Owned)
+                .map(Value::Text)
         }
         "sh" => println!("markup.rs: Running shell"),
         s => todo!("markup.rs: {}", s),
     }
 
-    Ok(Value::String("".to_string()))
+    Ok(Value::Text(Cow::Borrowed("")))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // env
 pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     let name: &str = match &args[0] {
-        Value::Str(s) => s,
-        Value::String(s) => s,
+        Value::Text(s) => s,
         _ => return Err(Error::Arg(0, "Invalid type, expecting string".into())),
     };
-    fetch_env_var(name).map(Value::String)
+    fetch_env_var(name).map(Cow::Owned).map(Value::Text)
 }
 
 /******************************************************************************

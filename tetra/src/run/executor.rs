@@ -1,6 +1,7 @@
 //run: cargo test -- --nocapture
 
 use std::collections::HashMap;
+use std::borrow::Cow;
 use std::mem;
 
 use super::utility::concat;
@@ -18,17 +19,17 @@ use crate::parser::{Arg, Command, Label};
 
 const ITERATION_LIMIT: usize = 1000;
 
-pub fn run<'source, K, V: Clone>(
-    ctx: &Bindings<K, V>,
+pub fn run<'a, K, V: Clone>(
+    ctx: &Bindings<'a, K, V>,
     ast: &[Command],
     args: &[Token<Arg>],
-    original: &'source str,
+    original: &str,
 ) -> Result<String, String> {
-    let mut internal: HashMap<&str, Value<'source, V>> = HashMap::new();
+    let mut internal: HashMap<&str, Value<V>> = HashMap::new();
     let mut external = Variables {
         bindings: HashMap::new(),
     };
-    let mut outputs: Vec<DirtyValue<'source, V>> = Vec::with_capacity(ast.len());
+    let mut outputs: Vec<DirtyValue<V>> = Vec::with_capacity(ast.len());
     let mut binded_args = Vec::with_capacity(args.len());
 
     debug_assert!(!ast.is_empty());
@@ -82,21 +83,21 @@ pub fn run<'source, K, V: Clone>(
                         };
                     } else if let Some(func) = ctx.functions.get(name) {
                         let output = match func {
-                            Func::Pure(f) => (
+                            Func::Pure(f, params) => (
                                 Dirty::Ready,
-                                f.call(bindings).map_err(|err| {
-                                    err.to_display(original, s, &args[cmd.args.0..cmd.args.1])
-                                })?,
+                                params.check_args(&ctx.parameters, bindings)
+                                    .and_then(|_| f.call(bindings))
+                                    .map_err(|err| err.to_display(original, s, &args[cmd.args.0..cmd.args.1]))?,
                             ),
-                            Func::Stateful(f) => {
+                            Func::Stateful(f, params) => {
                                 let old_output = mem::replace(&mut outputs[i].1, Value::Null);
-                                f.call(bindings, old_output, &mut external).map_err(|err| {
-                                    err.to_display(original, s, &args[cmd.args.0..cmd.args.1])
-                                })?
+                                params.check_args(&ctx.parameters, bindings)
+                                    .and_then(|_| f.call(bindings, old_output, &mut external))
+                                    .map_err(|err| err.to_display(original, s, &args[cmd.args.0..cmd.args.1]))?
                             }
                         };
                         outputs[i] = output;
-                        //outputs[i] = (Dirty::Ready, Value::Str("|"));
+                        //outputs[i] = (Dirty::Ready, Value::Text("|"));
                     } else {
                         return Err(format!(
                             "{} {}",
@@ -131,7 +132,7 @@ pub fn run<'source, K, V: Clone>(
     //println!("It took {} iteration(s) to parse", iter_count);
     //println!("====start====");
     match outputs.pop() {
-        Some((_, Value::String(s))) => Ok(s),
+        Some((_, Value::Text(s))) => Ok(s.to_string()),
         _ => unreachable!(),
     }
 }
@@ -155,7 +156,7 @@ impl Command {
     ) {
         for arg in &args[self.args.0..self.args.1] {
             bindings.push(match arg.me {
-                Arg::Str => Value::Str(arg.to_str(original)),
+                Arg::Str => Value::Text(Cow::Borrowed(arg.to_str(original))),
                 Arg::Char(c) => Value::Char(c),
                 Arg::Reference(_) => Value::Null,
                 //Arg::Reference
