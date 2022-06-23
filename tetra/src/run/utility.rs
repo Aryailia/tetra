@@ -83,7 +83,11 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
                 .map(Cow::Owned)
                 .map(Value::Text)
         }
-        "sh" => println!("markup.rs: Running shell"),
+        "sh" => {
+            return run_command("sh", Some(cell_body), &["-s"])
+                .map(Cow::Owned)
+                .map(Value::Text)
+        }
         s => todo!("markup.rs: {}", s),
     }
 

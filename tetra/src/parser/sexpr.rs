@@ -143,6 +143,8 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<ParseOu
                 fsm.mode = Mode::Code;
                 bound_push!(buffer, Token::new(SexprType::NewFunction, source));
             }
+            (Mode::Text, LexType::Literal(s)) =>
+                bound_push!(buffer, l.remap(SexprType::Text(s))),
             (Mode::Text, _) => debug_print_token!(die@l, debug_source),
 
             ////////////////////////////////////////////////////////////////////
@@ -282,6 +284,7 @@ pub enum Arg {
     //Literal(usize, usize), // Range indexing into vec[] for {Literal}'s
     Str,
     Char(char),
+    Text(&'static str),
     Ident,            // Either a variable of function Ident
     IdentFunc,        // Just a function Ident
     Reference(usize), // Index into {args} pointing to an 'Arg::Output'
@@ -295,6 +298,7 @@ pub enum Arg {
 enum SexprType {
     Str,        // Index into {data} array
     Char(char), // Index into {data} array
+    Text(&'static str),
     Ident,
     IdentFunc,
     Stdin,
@@ -425,7 +429,7 @@ impl Fsm {
         let mut comma_after_first = false;
         {
             let mut first: Option<Arg> = None;
-            // {x} is the parameter index including the label but no including
+            // {x} is the parameter index including the label but not including
             // piped arguments as these are to be pushed to the end
             // {y} is the same as {x} but tracks how many arguments since the
             // last 'SexprType::ArgSeparator', i.e. since the last comma
@@ -433,7 +437,9 @@ impl Fsm {
             for p in &params[start..] {
                 (x, y, first) = match p.me {
                     SexprType::Str => (x + 1, y + 1, first.or(Some(Arg::Str))),
-                    SexprType::Char(_) => (x + 1, y + 1, first.or(Some(Arg::Str))),
+                    // @TODO: Arg::Str is correct?
+                    SexprType::Char(c) => (x + 1, y + 1, first.or(Some(Arg::Char(c)))),
+                    SexprType::Text(s) => (x + 1, y + 1, first.or(Some(Arg::Text(s)))),
                     SexprType::Assign => unreachable!(),
                     SexprType::ArgSeparator if x == 1 => {
                         comma_after_first = true;
@@ -482,6 +488,7 @@ impl Fsm {
             match p.me {
                 SexprType::Str => bound_push!(self.arg_buffer, p.remap(Arg::Str)),
                 SexprType::Char(c) => bound_push!(self.arg_buffer, p.remap(Arg::Char(c))),
+                SexprType::Text(s) => bound_push!(self.arg_buffer, p.remap(Arg::Text(s))),
                 SexprType::Assign => unreachable!(),
                 SexprType::ArgSeparator => {}
                 SexprType::Ident => {
@@ -616,6 +623,7 @@ impl Token<Arg> {
         match self.me {
             Arg::Str => format!("{:?}", self.to_str(source)),
             Arg::Char(c) => format!("{:?}", c),
+            Arg::Text(s) => s.to_string(),
             Arg::Assign => '='.to_string(),
             // This is either a variable or function identifier
             Arg::Ident => self.to_str(source).to_string(),

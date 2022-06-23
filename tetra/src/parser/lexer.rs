@@ -8,6 +8,8 @@ type ParseError = Token<&'static str>;
 type PullParseOutput = Result<Option<Lexeme>, ParseError>;
 type Lexeme = Token<LexType>;
 
+// {_config} is a placeholder for when we pass a struct that configures
+// details such as "{$ $}" should be the syntax for inline code cells
 pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError> {
     // We add plus one for the empty string case  "" which is one lexeme long
     let mut lexemes = Vec::with_capacity(original.len() + 1);
@@ -18,10 +20,10 @@ pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError>
     while let Some(token1) = parse(&mut fsm, &mut walker)? {
         bound_push!(lexemes, token1);
     }
+    //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(original)));
     debug_assert_eq!(original, reconstruct_string(original, &lexemes));
     Ok(lexemes)
 }
-
 
 /******************************************************************************
  * Cell-level FSM
@@ -47,6 +49,8 @@ pub enum LexType {
     ParenStart,
     ParenClose,
     Stdin,
+
+    Literal(&'static str),
 
     QuoteStart,
     QuoteClose,
@@ -186,6 +190,9 @@ fn walk_empty_string() {
 // Because we advance the walker iter once (in `Walker::new()`) before parsing,
 // we want do-while loops. We want to move
 fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
+    // Each call to `parse()` only outputs one Lexeme, hence we need a
+    // 'CellMode::Transition' for when there are two lexemes to output to
+    // stagger them
     match fsm.mode {
         CellMode::Text => {
             let start = walker.curr;
@@ -193,8 +200,27 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
 
             while let Some((_, curr, _)) = walker.advance(do_while) {
                 let current_str = &walker.original[curr..];
+                let literals = [
+                    ("{{|", "{|", 3),
+                    ("|}}", "|}", 3),
+                    ("{{$", "{$", 3),
+                    ("$}}", "$}", 3),
+                    ("{{#", "{#", 3),
+                    ("#}}", "#}", 3),
+                ];
                 let (found, next_mode, transition, advance_amount) =
-                    if current_str.starts_with(fsm.heredoc.0) {
+                    // @TODO: literals add this to configuration
+                    if let Some((from, into, len)) = literals.iter().find(|x| current_str.starts_with(x.0)) {
+                        debug_assert_eq!(from.len(), *len);
+                        let s = Source::Range(curr, curr + *len);
+                        let t = Token::new(LexType::Literal(into), s);
+
+                        // Back to 'CellMode::Text', just using transition to
+                        // push 'LexType::Literal'
+                        let trans = Some((CellMode::Text, t));
+                        (true, CellMode::Transition, trans, *len)
+
+                    } else if current_str.starts_with(fsm.heredoc.0) {
                         let s = Source::Range(curr, curr + fsm.heredoc.0.len());
                         let t = Token::new(LexType::HereDocStart, s);
                         let trans = Some((CellMode::HereDoc, t));
@@ -210,6 +236,8 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
                         (false, CellMode::Text, None, 0)
                     };
 
+                // If a non-'LexType::Text' lexeme found, push everything till
+                // now as a Text and setup to push
                 if found {
                     walker.skip(advance_amount);
                     fsm.mode = next_mode;
@@ -222,9 +250,11 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
             if walker.is_end() {
                 fsm.mode = CellMode::Finish;
             }
+            // Last token till the end of the file is a 'Text' lexeme.
             let text = Token::new(LexType::Text, Source::Range(start, walker.curr));
             Ok(Some(text))
         }
+
         CellMode::Transition => {
             let token;
             (fsm.mode, token) = take(&mut fsm.transition_to).unwrap();
@@ -250,14 +280,24 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
         }
 
         CellMode::HereDoc => {
-            let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, fsm.heredoc.1, LexType::HereDocClose);
+            let (t, is_done) = lex_code_body(
+                &mut fsm.code_fsm,
+                walker,
+                fsm.heredoc.1,
+                LexType::HereDocClose,
+            );
             if is_done {
                 fsm.mode = CellMode::Text;
             }
             t
         }
         CellMode::Inline => {
-            let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, fsm.inline.1, LexType::InlineClose);
+            let (t, is_done) = lex_code_body(
+                &mut fsm.code_fsm,
+                walker,
+                fsm.inline.1,
+                LexType::InlineClose,
+            );
             if is_done {
                 fsm.mode = CellMode::Text;
             }
@@ -316,7 +356,12 @@ fn is_invalid_second_ident_char(c: char) -> bool {
     c != '_' && (c.is_ascii_punctuation() || c.is_whitespace())
 }
 
-fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, closer: LexType) -> (PullParseOutput, bool) {
+fn lex_code_body(
+    fsm: &mut CodeFsm,
+    walker: &mut Walker,
+    closer_str: &str,
+    closer: LexType,
+) -> (PullParseOutput, bool) {
     // Eat whitespace
     walker.advance_until(|c| !c.is_whitespace());
 
@@ -351,8 +396,6 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
             } else {
                 (LexType::Ident, ident_len, false)
             }
-
-
         }
         (CodeMode::Regular, '|') => (LexType::Pipe, len_utf8!('|' => 1), false),
         (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
@@ -377,6 +420,7 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
                 match ch {
                     'n' => (LexType::QuoteEscaped('\n'), 1, false),
                     't' => (LexType::QuoteEscaped('\t'), 1, false),
+                    '"' => (LexType::QuoteEscaped('"'), 1, false),
                     ' ' | '\n' => (LexType::QuoteBlank, 1, false),
                     _ => {
                         let source = Source::Range(curr, post);
@@ -416,7 +460,8 @@ fn lex_code_body(fsm: &mut CodeFsm, walker: &mut Walker, closer_str: &str, close
         //}
         _ => {
             let source = Source::Range(curr, post);
-            return (Err(Token::new("Invalid Syntax", source)), false);
+            println!("CodeMode::{:?}", fsm.mode);
+            return (Err(Token::new("lexer.rs: Invalid Syntax", source)), false);
         }
     };
 
@@ -453,40 +498,33 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             Source::Range(start, close) => &original[start..close],
         };
 
-
         // Whitespace is only deleted in code cells
         // Add whitespace based on {original} and our current position
         match mode {
             CellMode::HereDoc | CellMode::Inline => {
                 let len = buffer.len();
                 let remaining = &original[len..];
-                let whitespace_len = remaining
-                    .find(|c: char| !c.is_whitespace())
-                    .unwrap_or(0);
+                let whitespace_len = remaining.find(|c: char| !c.is_whitespace()).unwrap_or(0);
 
                 //println!("{:?} {:?}", whitespace_len, text);
 
                 buffer.push_str(&original[len..len + whitespace_len]);
-                assert_eq!(&original[0..len + whitespace_len], buffer,
+                assert_eq!(
+                    &original[0..len + whitespace_len],
+                    buffer,
                     "\n\nAdded {:?}\n",
                     &original[len..len + whitespace_len],
                 );
-
             }
             _ => {}
         }
 
-
         macro_rules! push_check {
-            ($buffer:ident $char:literal if $text:ident == $str:literal ) => {
-                {
-                    assert_eq!($str, $text);
-                    $buffer.push($char);
-                }
-
-            };
+            ($buffer:ident $char:literal if $text:ident == $str:literal ) => {{
+                assert_eq!($str, $text);
+                $buffer.push($char);
+            }};
         }
-
 
         // Convert each lexeme to its string equivalent and push onto the buffer
         match token.me {
@@ -517,14 +555,15 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             LexType::CmdSeparator => push_check!(buffer ';' if text == ";"),
             LexType::Assign => push_check!(buffer '=' if text == "="),
 
-
             LexType::Ident => {
                 assert!(text.find(is_invalid_second_ident_char).is_none());
                 buffer.push_str(text);
             }
             LexType::IdentParen => {
                 let penultimate_post = text.len() - len_utf8!('(' => 1);
-                assert!(text[..penultimate_post].find(is_invalid_second_ident_char).is_none());
+                assert!(text[..penultimate_post]
+                    .find(is_invalid_second_ident_char)
+                    .is_none());
                 assert_eq!("(", &text[penultimate_post..]);
                 buffer.push_str(text);
             }
@@ -532,6 +571,14 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             LexType::ParenStart => push_check!(buffer '(' if text == "("),
             LexType::ParenClose => push_check!(buffer ')' if text == ")"),
             LexType::Stdin => push_check!(buffer '.' if text == "."),
+
+            LexType::Literal("{|") => buffer.push_str("{{|"),
+            LexType::Literal("|}") => buffer.push_str("|}}"),
+            LexType::Literal("{$") => buffer.push_str("{{$"),
+            LexType::Literal("$}") => buffer.push_str("$}}"),
+            LexType::Literal("{#") => buffer.push_str("{{#"),
+            LexType::Literal("#}") => buffer.push_str("#}}"),
+            LexType::Literal(_) => unreachable!(),
 
             LexType::QuoteStart | LexType::QuoteClose => push_check!(buffer '"' if text == "\""),
             LexType::Quoted => buffer.push_str(text),

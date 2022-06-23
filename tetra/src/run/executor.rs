@@ -148,7 +148,7 @@ impl Command {
     // The reason we separate out init from load step is because we have to loop
     // several times if there are stateful commands, repeating the load half
     // Also rust is RAII, so
-    fn init_args<'a, V>(
+    pub fn init_args<'a, V>(
         &self,
         original: &'a str,
         args: &[Token<Arg>],
@@ -158,6 +158,7 @@ impl Command {
             bindings.push(match arg.me {
                 Arg::Str => Value::Text(Cow::Borrowed(arg.to_str(original))),
                 Arg::Char(c) => Value::Char(c),
+                Arg::Text(s) => Value::Text(Cow::Borrowed(s)),
                 Arg::Reference(_) => Value::Null,
                 //Arg::Reference
                 Arg::Ident => Value::Null, // First arg of assign is the only place
