@@ -74,10 +74,16 @@ fn main() {
     };
 
     let ctx = tetra::run::markup::default_context();
-    let output = ctx.compile(&contents).unwrap();
+    let output = match ctx.compile(&contents) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
     if let Some(path) = target_file {
         let mut buffer = fs::File::create(&path).unwrap();
-        buffer.write(output.as_bytes());
+        buffer.write(output.as_bytes()).unwrap();
     } else {
         println!("{}", output);
     }

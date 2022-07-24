@@ -1,10 +1,11 @@
-// This the default flavour of this templating markup language. If you want
+// This default flavour of this templating markup language. If you want
 // to implement your own flavour (i.e. with your own functions), you should
 // be able to copy this file directly.
 
 //run: cargo test -- --nocapture
 
 use std::borrow::Cow;
+use std::fs;
 
 // Do not use super so that if others want to make their own flavour, they
 // can copy this file without issue
@@ -13,25 +14,40 @@ use crate::run::{Value, Variables};
 
 use crate::run::utility::{code, concat, env};
 use crate::run::utility::{fetch_env_var, run_command};
-use crate::run::{LIMITED, UNLIMITED}; // these are just bools
 use crate::run::value as v;
+use crate::run::{LIMITED, UNLIMITED}; // these are just bools
 
-
+// The main difference between pure and stateful functions is that
+// * pure functions run only once (once all their arguments are ready) and
+//   stateful functions until they report back that they are 'Dirty::Ready'
+// * stateful functions gain access to a global namespace where they can store
+//   data
+//
+// Registering is done by providing it
+// * a name to be called while writing markup
+// * reference to function definition
+// * a enum (effectively a bool) that specifies whether to check the number
+//   of arguments or not
+// * a list for what types of arguments the function expects
 pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
     let mut ctx = Bindings::new();
     ctx.register_pure_function("env", &env, LIMITED, &[v::TEXT]);
-    ctx.register_pure_function("include", &concat, UNLIMITED, &[]);
+    ctx.register_pure_function("include", &include, UNLIMITED, &[v::TEXT]);
 
     // "r/run <lang> <code-body>"
     ctx.register_pure_function("run", &code, LIMITED, &[v::TEXT, v::TEXT]);
     ctx.register_pure_function("r", &code, LIMITED, &[v::TEXT, v::TEXT]);
+    ctx.register_pure_function("if_equals", &if_eq_statement, LIMITED, &[v::TEXT, v::TEXT, v::TEXT]);
+    ctx.register_pure_function("run_if_equals", &run_if_equals, LIMITED, &[v::TEXT, v::TEXT, v::TEXT, v::TEXT]);
+    ctx.register_pure_function("run_env", &run_env, LIMITED, &[v::TEXT, v::TEXT, v::TEXT, v::TEXT]);
 
-    ctx.register_pure_function("prettify", &concat, LIMITED, &[]);
+    ctx.register_pure_function("concat", &concat, UNLIMITED, &[]);
     ctx.register_pure_function("end", &concat, LIMITED, &[v::TEXT]);
-    ctx.register_pure_function("if", &concat, LIMITED, &[]);
-    ctx.register_pure_function("endif", &concat, LIMITED, &[v::TEXT]);
     ctx.register_stateful_function("cite", &cite, LIMITED, &[v::TEXT]);
     ctx.register_stateful_function("references", &references, LIMITED, &[]);
+
+    ctx.register_stateful_function("label_set", &label_set, LIMITED, &[v::TEXT, v::TEXT]);
+    ctx.register_stateful_function("label", &label, LIMITED, &[v::TEXT]);
     ctx
 }
 
@@ -41,6 +57,7 @@ pub enum CustomKey {
     Citations,
     CiteCount,
     CiteState,
+    Label(String),
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +67,13 @@ pub enum CustomValue {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+// The citations (e.g. parenthetical references) and references (bibliography
+// listing full form citations) functions.
+
+// Counts the citations on the first pass (for `Vec::with_capacity()`,
+// accumulates all the citations on the second pass, pass that to pandoc
+// and then prints out the citations
 fn cite<'a>(
     args: &[Value<'a, CustomValue>],
     old_output: Value<'a, CustomValue>,
@@ -113,7 +137,8 @@ fn cite<'a>(
         }
         1 | 2 => {
             let list_value = storage.get_mut(&CustomKey::Citations).unwrap();
-            let list: &mut String = unwrap!(unreachable list_value => Value::Text(Cow::Owned(s)) => s);
+            let list: &mut String =
+                unwrap!(unreachable list_value => Value::Text(Cow::Owned(s)) => s);
             list.push_str(unwrap!(unreachable &args[0] => Value::Text(s) => s));
             list.push('\n');
             list.push('\n');
@@ -142,8 +167,8 @@ fn references<'a>(
         .map(|v| unwrap!(unreachable v => Value::Usize(x) => *x))
         .unwrap_or(0);
     match state {
-        0 => Ok((Dirty::Waiting, Value::Text(Cow::Borrowed("")))),
-        1 | 2 | 3 | 4 => {
+        0 | 1 | 2  => Ok((Dirty::Waiting, Value::Text(Cow::Borrowed("")))),
+        3 | 4 => {
             let cite_count = storage
                 .get(&CustomKey::CiteCount)
                 .map(|v| unwrap!(unreachable v => Value::Usize(x) => *x))
@@ -151,15 +176,18 @@ fn references<'a>(
 
             let citerefs = storage.get_mut(&CustomKey::Citations).unwrap();
             let citerefs = unwrap!(unreachable citerefs => Value::Text(s) => s);
+            //println!("citerefs {}", citerefs);
             let ref_start = citerefs.split("\n\n").nth(cite_count).unwrap().as_ptr();
             let references = &citerefs[ref_start as usize - citerefs.as_ptr() as usize..];
 
-            Ok((Dirty::Ready, Value::Text(Cow::Owned(references.to_string()))))
+            Ok((
+                Dirty::Ready,
+                Value::Text(Cow::Owned(references.to_string())),
+            ))
         }
         _ => unreachable!(),
     }
 }
-
 
 pub fn pandoc_cite(citekey: &str) -> Result<String, Error> {
     let bibliography = fetch_env_var("BIBLIOGRAPHY")?;
@@ -167,9 +195,123 @@ pub fn pandoc_cite(citekey: &str) -> Result<String, Error> {
         "pandoc",
         Some(citekey),
         //&["--citeproc", "-M", "suppress-bibliography=true", "-t", "plain",
-        &["--citeproc", "-t", "plain", "--bibliography", &bibliography],
+        &["--citeproc", "-t", "asciidoctor", "--bibliography", &bibliography],
+        None,
     )?;
 
     Ok(citation)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// includes other files into the current file
+// @TODO: add ability to parse those files as well
+pub fn include<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+    let path: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let contents = fs::read_to_string(path).map_err(|err| {
+        Error::Arg(
+            0,
+            Cow::Owned(format!("Could not read file {:?}: {}", path, err)),
+        )
+    })?;
+    //let mut buffer = String::with_capacity(recursive_calc_length(args)?);
+    //recursive_concat::<V>(args, &mut buffer);
+    Ok(Value::Text(Cow::Owned(contents)))
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// includes other files into the current file
+// @TODO: add ability to parse those files as well
+pub fn if_eq_statement<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+    let lvalue: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
+    if lvalue == rvalue {
+        let contents: &str = unwrap!(unreachable &args[2] => Value::Text(s) => s);
+        Ok(Value::Text(Cow::Owned(contents.to_string())))
+    } else {
+        Ok(Value::Text(Cow::Borrowed("")))
+    }
+}
+
+pub fn run_if_equals<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+    let lvalue: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
+    if lvalue == rvalue {
+        Ok(code(&args[2..])?)
+    } else {
+        Ok(Value::Text(Cow::Borrowed("")))
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+fn label_set<'a>(
+    args: &[Value<'a, CustomValue>],
+    _: Value<'a, CustomValue>,
+    storage: &mut Variables<'a, CustomKey, CustomValue>,
+) -> StatefulResult<'a, CustomValue> {
+    let label_name: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let label: Cow<str> = unwrap!(unreachable &args[1] => Value::Text(s) => s.clone());
+    let label_key = CustomKey::Label(label_name.to_string());
+    match storage.get(&label_key) {
+        Some(_) => Err(Error::Arg(
+            0,
+            Cow::Owned(format!("The label {:?} has already been set", label_name)),
+        )),
+        None => {
+            storage.insert(label_key, Value::Text(label.clone()));
+            Ok((Dirty::Ready, Value::Text(label)))
+        }
+    }
+
+}
+fn label<'a>(
+    args: &[Value<'a, CustomValue>],
+    old_output: Value<'a, CustomValue>,
+    storage: &mut Variables<'a, CustomKey, CustomValue>,
+) -> StatefulResult<'a, CustomValue> {
+    let label_name: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let label = storage.get(&CustomKey::Label(label_name.to_string()));
+
+    match (old_output, label)  {
+        // If it has been set then return
+        (_, Some(Value::Text(s))) => Ok((Dirty::Ready, Value::Text(s.clone()))),
+
+        // First iteration
+        (Value::Null, _) => Ok((Dirty::Waiting, Value::Usize(1))),
+
+        // Any other iteration
+        (Value::Usize(_), _) => Err(Error::Arg(
+            0,
+            Cow::Owned(format!("The label {:?} is not set. You must run `label_set({:?})` at some point in the document", label_name, label_name)),
+        )),
+        _ => unreachable!(),
+    }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Same as `code()` but allows you set the environment variables
+pub fn run_env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+    let id: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
+    let lang: &str = unwrap!(unreachable &args[2] => Value::Text(s) => s);
+    let cell_body: &str = unwrap!(unreachable &args[3] => Value::Text(s) => s);
+
+    match lang {
+        "graphviz" | "dot" => {
+            return run_command("dot", Some(cell_body), &["-Tsvg"], Some(vec![(id, rvalue)]))
+                .map(Cow::Owned)
+                .map(Value::Text)
+        }
+        "sh" => {
+            return run_command("sh", Some(cell_body), &["-s"], Some(vec![(id, rvalue)]))
+                .map(Cow::Owned)
+                .map(Value::Text)
+        }
+        s => todo!("markup.rs: {}", s),
+    }
 }
 

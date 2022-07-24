@@ -59,12 +59,7 @@ fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
 ////////////////////////////////////////////////////////////////////////////////
 // code
 pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
-    if args.len() > 2 {
-        //println!("len {}", args.len());
-        todo!("temp panic for when we put actual error handling");
-    }
-
-    //let lang = unwrap!(or_invalid args[0] => String(x) | Str(x) => x);
+    //let lang = unwrap!(or_invalid args[0] => Value::Text(x) => x);
     let lang: &str = match &args[0] {
         Value::Text(x) => x,
         _ => return Err(Error::Arg(0, "Invalid type".into())),
@@ -79,12 +74,12 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
             println!("markup.rs: Running r");
         }
         "graphviz" | "dot" => {
-            return run_command("dot", Some(cell_body), &["-Tsvg"])
+            return run_command("dot", Some(cell_body), &["-Tsvg"], None)
                 .map(Cow::Owned)
                 .map(Value::Text)
         }
         "sh" => {
-            return run_command("sh", Some(cell_body), &["-s"])
+            return run_command("sh", Some(cell_body), &["-s"], None)
                 .map(Cow::Owned)
                 .map(Value::Text)
         }
@@ -108,10 +103,15 @@ pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
  * Helpers
  ******************************************************************************/
 
-pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<String, Error> {
+pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str], env: Option<Vec<(&str, &str)>>) -> Result<String, Error> {
+    let mut process = process::Command::new(program);
+    process.args(args);
+    if let Some(e) = env {
+        process.envs(e);
+    }
+
     let child = if let Some(s) = stdin {
-        let mut child = process::Command::new(program)
-            .args(args)
+        let mut child = process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -121,8 +121,7 @@ pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<
         stdin.write_all(s.as_bytes()).unwrap();
         child
     } else {
-        process::Command::new(program)
-            .args(args)
+        process
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()
@@ -145,8 +144,8 @@ pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str]) -> Result<
 pub fn fetch_env_var(key: &str) -> Result<String, Error> {
     Ok(std::env::vars()
         .find(|(k, _)| k == key)
-        .ok_or(Error::Generic(Cow::Borrowed(
-            "Missing BIBLIOGRAPHY environment variable",
+        .ok_or(Error::Generic(Cow::Owned(
+            format!("Missing {} environment variable", key)
         )))?
         .1)
 }
