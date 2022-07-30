@@ -55,7 +55,7 @@ pub enum LexType {
     QuoteStart,
     QuoteClose,
     Quoted,
-    QuoteEscaped(char),
+    QuoteEscaped(&'static str),
     QuoteBlank,
     //Finish,
 }
@@ -418,9 +418,9 @@ fn lex_code_body(
             // `skip(1)` because we `advance(AHEAD)`. Effectively, we `skip(2)`
             if let Some((ch, _, _)) = walker.advance(AHEAD) {
                 match ch {
-                    'n' => (LexType::QuoteEscaped('\n'), 1, false),
-                    't' => (LexType::QuoteEscaped('\t'), 1, false),
-                    '"' => (LexType::QuoteEscaped('"'), 1, false),
+                    'n' => (LexType::QuoteEscaped("\n"), 1, false),
+                    't' => (LexType::QuoteEscaped("\t"), 1, false),
+                    '"' => (LexType::QuoteEscaped("\""), 1, false),
                     ' ' | '\n' => (LexType::QuoteBlank, 1, false),
                     _ => {
                         let source = Source::Range(curr, post);

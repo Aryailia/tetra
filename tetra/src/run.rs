@@ -15,11 +15,12 @@ macro_rules! unwrap {
 }
 
 mod executor;
+//pub mod exec_async;
 pub mod markup;
 pub mod utility;
 
 use crate::framework::Source;
-use crate::parser::{self, Arg, Command};
+use crate::parser::{self, Item, Command};
 use crate::Token;
 
 use std::borrow::Cow;
@@ -37,7 +38,7 @@ pub enum Error {
 
 impl Error {
     // @TODO: consider whether to output Cow<str> or not
-    fn to_display(&self, original: &str, label: &Source, args: &[Token<Arg>]) -> String {
+    fn to_display(&self, original: &str, label: &Source, args: &[Token<Item>]) -> String {
         println!("{:?} {:?}", args, self);
         match self {
             Error::Arg(i, s) => format!("{} {}", args[*i].source.get_context(original), s),
@@ -159,7 +160,7 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
     pub fn run(
         &self,
         ast: &[Command],
-        args: &[Token<Arg>],
+        args: &[Token<Item>],
         original: &str,
     ) -> Result<String, String> {
         executor::run(self, ast, args, original)
@@ -168,7 +169,7 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
     pub fn compile(&self, original: &str) -> Result<String, String> {
         let (ast, args2, _provides_for) = parser::step1_lex(original, true)
             .and_then(|lexemes| parser::step2_to_sexpr(&lexemes, original))
-            .and_then(|(sexprs, args1)| parser::step3_to_ast(&sexprs, &args1))
+            .and_then(|sexprs| parser::step3_to_ast(&sexprs))
             .map_err(|token| format!("{} {}", token.get_context(original), token.me))?;
         //let lexemes = parser::step1_lex(original, true)?;
         //let (sexprs, args1) = parser::step2_to_sexpr(&lexemes, original)?;

@@ -21,13 +21,13 @@ fn process(content: &str) -> String {
     let lexemes = unwrap(content, parser::step1_lex(content, true));
     //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(content)));
 
-    let (sexprs, args) = unwrap(content, parser::step2_to_sexpr(&lexemes, content));
-    //sexprs
+    let sexprs = unwrap(content, parser::step2_to_sexpr(&lexemes, content));
+    //sexprs.0
     //    .iter()
     //    .enumerate()
-    //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&args, content)));
+    //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&sexprs.1, content)));
 
-    let (ast, args, _provides_for) = unwrap(content, parser::step3_to_ast(&sexprs, &args));
+    let (ast, args, _provides_for) = unwrap(content, parser::step3_to_ast(&sexprs));
     //ast.iter().enumerate().for_each(|(i, t)| {
     //        println!(
     //            "{:?} | {} -> {}",
@@ -66,6 +66,10 @@ fn edge_cases() {
     assert_eq!(process("{| ; . |} a"), " a");
     assert_eq!(process("{| . |} a"), " a a");
     assert_eq!(process("{| .; |} a"), "");
+
+    assert_eq!(process("{| a = |} b {| a |}"), " b  b ");
+    // TODO: This should report back an error that it is not defined yet
+    //assert_eq!(process("{| ; a = . |} b {$ a $}"), "");
 }
 
 const _REF: &str = r#"

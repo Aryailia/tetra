@@ -8,7 +8,7 @@ use super::utility::concat;
 use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
 use crate::framework::Token;
-use crate::parser::{Arg, Command, Label};
+use crate::parser::{Item, Command, Label};
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -22,7 +22,7 @@ const ITERATION_LIMIT: usize = 1000;
 pub fn run<'a, K, V: Clone>(
     ctx: &Bindings<'a, K, V>,
     ast: &[Command],
-    args: &[Token<Arg>],
+    args: &[Token<Item>],
     original: &str,
 ) -> Result<String, String> {
     let mut internal: HashMap<&str, Value<V>> = HashMap::new();
@@ -59,7 +59,7 @@ pub fn run<'a, K, V: Clone>(
                 Label::Assign(_) => {
                     let lvalue = &args[cmd.args.0];
                     let name = lvalue.source.to_str(original);
-                    debug_assert!(matches!(lvalue.me, Arg::Ident), "{:?}", lvalue);
+                    debug_assert!(matches!(lvalue.me, Item::Ident), "{:?}", lvalue);
                     debug_assert_eq!(2, bindings.len());
 
                     if ctx.functions.get(name).is_some() {
@@ -151,26 +151,26 @@ impl Command {
     pub fn init_args<'a, V>(
         &self,
         original: &'a str,
-        args: &[Token<Arg>],
+        args: &[Token<Item>],
         bindings: &mut Vec<Value<'a, V>>,
     ) {
         for arg in &args[self.args.0..self.args.1] {
             bindings.push(match arg.me {
-                Arg::Str => Value::Text(Cow::Borrowed(arg.to_str(original))),
-                Arg::Char(c) => Value::Char(c),
-                Arg::Text(s) => Value::Text(Cow::Borrowed(s)),
-                Arg::Reference(_) => Value::Null,
-                //Arg::Reference
-                Arg::Ident => Value::Null, // First arg of assign is the only place
-                Arg::IdentFunc | Arg::Assign | Arg::Stdin => unreachable!(),
+                Item::Str => Value::Text(Cow::Borrowed(arg.to_str(original))),
+                Item::Text(s) => Value::Text(Cow::Borrowed(s)),
+                Item::Reference(_) => Value::Null,
+                //Item::Reference
+                Item::Ident => Value::Null, // First arg of assign is the only place
+                Item::Func | Item::Assign | Item::Stdin | Item::PipedStdin
+                    | Item::Pipe | Item::Comma | Item::Paren | Item::Stmt => unreachable!(),
             });
         }
     }
 
-    fn are_args_ready<V>(&self, args: &[Token<Arg>], outputs: &[DirtyValue<V>]) -> bool {
+    fn are_args_ready<V>(&self, args: &[Token<Item>], outputs: &[DirtyValue<V>]) -> bool {
         let mut is_ready = true;
         for arg in &args[self.args.0..self.args.1] {
-            if let Arg::Reference(j) = arg.me {
+            if let Item::Reference(j) = arg.me {
                 is_ready &= matches!(outputs[j].0, Dirty::Ready);
             }
         }
@@ -180,13 +180,13 @@ impl Command {
     fn load_args<'a, V: Clone>(
         &self,
         ast: &[Command],
-        args: &[Token<Arg>],
+        args: &[Token<Item>],
         bindings: &mut [Value<'a, V>],
         outputs: &mut [DirtyValue<'a, V>],
     ) {
         let start = self.args.0;
         for (i, arg) in args[start..self.args.1].iter().enumerate() {
-            if let Arg::Reference(j) = arg.me {
+            if let Item::Reference(j) = arg.me {
                 // If {outputs[j]} has no dependents, we can just steal it
                 bindings[start + i] = if ast[j].reverse_dependant_count() == 0 {
                     mem::replace(&mut outputs[j].1, Value::Null)
