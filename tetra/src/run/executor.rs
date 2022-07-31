@@ -8,7 +8,7 @@ use super::utility::concat;
 use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
 use crate::framework::Token;
-use crate::parser::{Item, Command, Label};
+use crate::parser::{AstOutput, Item, Command, Label};
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -21,8 +21,7 @@ const ITERATION_LIMIT: usize = 1000;
 
 pub fn run<'a, K, V: Clone>(
     ctx: &Bindings<'a, K, V>,
-    ast: &[Command],
-    args: &[Token<Item>],
+    AstOutput(ast, args, _): &AstOutput,
     original: &str,
 ) -> Result<String, String> {
     let mut internal: HashMap<&str, Value<V>> = HashMap::new();

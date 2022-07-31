@@ -3,8 +3,8 @@ mod ast;
 mod lexer;
 mod sexpr;
 
-pub use sexpr::{SexprOutput};
-pub use ast::{Command, Label};
+pub use sexpr::SexprOutput;
+pub use ast::{AstOutput, Command, Label};
 
 pub use lexer::process as step1_lex;
 pub use sexpr::process as step2_to_sexpr;
@@ -35,6 +35,15 @@ pub enum Item {
     Paren,
     Stmt,
 }
+
+//// 'Item' but trimmed down to just the types. For "ast.rs" and "run/*".
+//pub enum Param {
+//    Str,
+//    Char(&'static str),
+//    Ident,
+//    Func,
+//    Reference(usize),
+//}
 
 
 

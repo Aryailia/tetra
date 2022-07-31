@@ -8,7 +8,7 @@ use super::sexpr::Sexpr;
 use super::{Item, SexprOutput};
 use crate::framework::{Source, Token};
 
-pub type ParseOutput = (Vec<Command>, Vec<Token<Item>>, Vec<usize>);
+pub struct AstOutput(pub Vec<Command>, pub Vec<Token<Item>>, pub Vec<usize>);
 pub type ParseError = Token<&'static str>;
 
 #[derive(Debug)]
@@ -18,7 +18,7 @@ pub struct Command {
     pub provides_for: (usize, usize),
 }
 
-pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<ParseOutput, ParseError> {
+pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput, ParseError> {
     ////////////////////////////////////////////////////////////////////////////
     // Reorder so that the HereDoc headers appear after their bodies
     let mut sorted_exprs: Vec<Sexpr> = Vec::with_capacity(sexprs.len());
@@ -240,7 +240,7 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<ParseOutpu
     // Remove the left values from {dependencies}
     let providees = dependencies.iter().map(|x| x.1).collect::<Vec<_>>();
 
-    Ok((output, gapless_args, providees))
+    Ok(AstOutput(output, gapless_args, providees))
     //Err(Token::new("Finished parsing", Source::Range(0, 0)))
 }
 

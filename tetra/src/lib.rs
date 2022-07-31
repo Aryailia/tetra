@@ -9,6 +9,7 @@ mod framework;
 mod errors;
 pub mod parser;
 pub mod run;
+mod api;
 
 pub use framework::Token;
 
@@ -61,10 +62,10 @@ mod tests {
         REF,     // 3, checking "cite()" functionality
     ];
 
-    #[test]
-    #[allow(dead_code, unreachable_code)]
+    //#[test]
+    #[allow(dead_code)]
     fn it_works() {
-        let file = _EG[3];
+        let file = _EG[2];
         let lexemes = log(file, parser::step1_lex(file, true));
         //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(file)));
         let sexprs = log(file, parser::step2_to_sexpr(&lexemes, file));
@@ -73,7 +74,7 @@ mod tests {
         //    .iter()
         //    .enumerate()
         //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&sexprs.1, file)));
-        let (ast, args, _provides_for) = log(file, parser::step3_to_ast(&sexprs));
+        let ast = log(file, parser::step3_to_ast(&sexprs));
         //ast.iter().enumerate().for_each(|(i, t)| {
         //    println!(
         //        "{:?} | {} -> {}",
@@ -83,7 +84,7 @@ mod tests {
         //    )
         //});
         let ctx = run::markup::default_context();
-        let out = match ctx.run(&ast, &args, file) {
+        let out = match ctx.run(&ast, file) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("{}", err);
@@ -194,8 +195,8 @@ echo yo
 stuff"#;
 }
 
-//#[cfg(not(test))]
-#[cfg(test)]
+#[cfg(not(test))]
+//#[cfg(test)]
 mod sexpr_tests {
     #[allow(unused_imports)]
     use super::*;

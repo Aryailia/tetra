@@ -20,7 +20,7 @@ pub mod markup;
 pub mod utility;
 
 use crate::framework::Source;
-use crate::parser::{self, Item, Command};
+use crate::parser::{self, AstOutput, Item};
 use crate::Token;
 
 use std::borrow::Cow;
@@ -157,24 +157,19 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
         }
     }
 
-    pub fn run(
-        &self,
-        ast: &[Command],
-        args: &[Token<Item>],
-        original: &str,
-    ) -> Result<String, String> {
-        executor::run(self, ast, args, original)
+    pub fn build(original: &str) -> Result<AstOutput, String> {
+        parser::step1_lex(original, true)
+            .and_then(|lexemes| parser::step2_to_sexpr(&lexemes, original))
+            .and_then(|sexprs| parser::step3_to_ast(&sexprs))
+            .map_err(|token| format!("{} {}", token.get_context(original), token.me))
+    }
+
+    pub fn run(&self, ast: &AstOutput, original: &str) -> Result<String, String> {
+        executor::run(self, ast, original)
     }
 
     pub fn compile(&self, original: &str) -> Result<String, String> {
-        let (ast, args2, _provides_for) = parser::step1_lex(original, true)
-            .and_then(|lexemes| parser::step2_to_sexpr(&lexemes, original))
-            .and_then(|sexprs| parser::step3_to_ast(&sexprs))
-            .map_err(|token| format!("{} {}", token.get_context(original), token.me))?;
-        //let lexemes = parser::step1_lex(original, true)?;
-        //let (sexprs, args1) = parser::step2_to_sexpr(&lexemes, original)?;
-        //let (ast, args2, _provides_for) = parser::step3_to_ast(&sexprs, &args1)?;
-        self.run(&ast, &args2, original)
+        self.run(&Self::build(original)?, original)
     }
 
     pub fn register_pure_function<F: PureFunction<V> + 'static>(
