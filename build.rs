@@ -1,7 +1,7 @@
 //run: cargo test -- --nocapture
 use tetra::{
+    self,
     api::{FileType, Metadata},
-    run::markup,
 };
 
 use std::env;
@@ -27,8 +27,13 @@ fn main() {
         }
     };
 
-    let ctx = markup::default_context();
-    let output = ctx.compile(&buffer, Metadata::new(FileType::Markdown, FileType::Markdown)).unwrap();
+    let ctx = tetra::default_context();
+    let output = ctx
+        .compile(
+            &buffer,
+            Metadata::new(FileType::Markdown, FileType::Markdown),
+        )
+        .unwrap();
 
     let output_path = Path::new(&project_path).join(README);
     fs::write(output_path, output.as_bytes()).unwrap();

@@ -17,12 +17,11 @@ macro_rules! unwrap {
 mod executor;
 //pub mod exec_async;
 mod function;
-pub mod markup;
 pub mod utility;
 
-use function::{Dirty, DirtyValue, Func};
-pub use function::{PureFunction, StatefulFunction};
-pub use function::{PureResult, StatefulResult, LIMITED, UNLIMITED};
+use function::{Func};
+pub use function::{PureFunction, PureResult, StatefulFunction, StatefulResult};
+pub use function::{Dirty, DirtyValue, LIMITED, UNLIMITED};
 
 ////////////////////////////////////////////////////////////////////////////////
 

@@ -14,7 +14,7 @@ macro_rules! compare_eq {
 
 #[test]
 fn edge_cases() {
-    let ctx = tetra::run::markup::default_context();
+    let ctx = tetra::default_context();
     compare_eq! { ctx,
         ""                  => ""
         "a"                 => "a"

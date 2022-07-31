@@ -8,9 +8,12 @@
 mod framework;
 mod errors;
 pub mod parser;
+#[macro_use]
 pub mod run;
 pub mod api;
+mod default_markup;
 
+pub use default_markup::default_context;
 pub use framework::Token;
 
 //use std::fmt::Debug;
@@ -84,7 +87,7 @@ mod tests {
         //        i
         //    )
         //});
-        let ctx = run::markup::default_context();
+        let ctx = default_context();
         let out = match ctx.run(&ast, Metadata::new(FileType::Markdown, FileType::HTML), file) {
             Ok(s) => s,
             Err(err) => {

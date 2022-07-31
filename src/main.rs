@@ -2,7 +2,10 @@ use std::fs;
 use std::io;
 use std::io::{Read, Write};
 
-use tetra::{run, api::{FileType, Metadata}};
+use tetra::{
+    self as tetralib,
+    api::{FileType, Metadata},
+};
 //use xflags;
 
 // https://fuchsia.dev/fuchsia-src/development/api/cli#keyed_options
@@ -10,7 +13,6 @@ use tetra::{run, api::{FileType, Metadata}};
 
 mod flags {
     #![allow(unused)]
-
     xflags::xflags! {
         /// Runs the Tetra parser on the file of your choice
         cmd tetra {
@@ -47,15 +49,13 @@ fn main() {
 
     let (contents, target_file) = match flags::Tetra::from_env() {
         Ok(flags) => match flags.subcommand {
-            flags::TetraCmd::Parse(p) => {
-                match fs::read_to_string(&p.input_file) {
-                    Ok(s) => (s, p.output_file),
-                    Err(err) => {
-                        eprintln!("{}. {:?}", err, p.input_file);
-                        std::process::exit(1)
-                    }
+            flags::TetraCmd::Parse(p) => match fs::read_to_string(&p.input_file) {
+                Ok(s) => (s, p.output_file),
+                Err(err) => {
+                    eprintln!("{}. {:?}", err, p.input_file);
+                    std::process::exit(1)
                 }
-            }
+            },
             flags::TetraCmd::ParseStdin(p) => {
                 let mut s = String::new();
                 match io::stdin().read_to_string(&mut s) {
@@ -66,17 +66,19 @@ fn main() {
                     }
                 }
             }
-        }
+        },
         Err(err) => {
             eprintln!("{}\n{}", err, flags::Tetra::HELP);
             std::process::exit(1)
         }
     };
 
-    let ctx = run::markup::default_context();
+    let ctx = tetralib::default_context();
     if let Some(path) = target_file {
-
-        let output = match ctx.compile(&contents, Metadata::new(FileType::Default, FileType::from(path.as_str()))) {
+        let output = match ctx.compile(
+            &contents,
+            Metadata::new(FileType::Default, FileType::from(path.as_str())),
+        ) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("{}", err);
@@ -84,9 +86,12 @@ fn main() {
             }
         };
         let mut buffer = fs::File::create(&path).unwrap();
-        buffer.write(output.as_bytes()).unwrap();
+        buffer.write_all(output.as_bytes()).unwrap();
     } else {
-        match ctx.compile(&contents, Metadata::new(FileType::Default, FileType::AsciiDoctor)) {
+        match ctx.compile(
+            &contents,
+            Metadata::new(FileType::Default, FileType::AsciiDoctor),
+        ) {
             Ok(s) => println!("{}", s),
             Err(err) => {
                 eprintln!("{}", err);
