@@ -9,7 +9,7 @@ mod framework;
 mod errors;
 pub mod parser;
 pub mod run;
-mod api;
+pub mod api;
 
 pub use framework::Token;
 
@@ -37,6 +37,7 @@ mod tests {
 
     use super::*;
     use framework::{self, Token};
+    use api::{Metadata, FileType};
 
     //#[test]
     //fn async_run() {
@@ -62,7 +63,7 @@ mod tests {
         REF,     // 3, checking "cite()" functionality
     ];
 
-    //#[test]
+    #[test]
     #[allow(dead_code)]
     fn it_works() {
         let file = _EG[2];
@@ -84,7 +85,7 @@ mod tests {
         //    )
         //});
         let ctx = run::markup::default_context();
-        let out = match ctx.run(&ast, file) {
+        let out = match ctx.run(&ast, Metadata::new(FileType::Markdown, FileType::HTML), file) {
             Ok(s) => s,
             Err(err) => {
                 eprintln!("{}", err);

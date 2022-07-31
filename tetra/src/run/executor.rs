@@ -9,6 +9,7 @@ use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
 use crate::framework::Token;
 use crate::parser::{AstOutput, Item, Command, Label};
+use crate::api::{Api, Metadata};
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -19,9 +20,16 @@ use crate::parser::{AstOutput, Item, Command, Label};
 
 const ITERATION_LIMIT: usize = 1000;
 
+impl<'a, K, V: Clone> Bindings<'a, K, V> {
+    pub fn run(&self, ast: &AstOutput, metadata: Metadata, original: &str) -> Result<String, String> {
+        run(self, ast, metadata, original)
+    }
+}
+
 pub fn run<'a, K, V: Clone>(
     ctx: &Bindings<'a, K, V>,
     AstOutput(ast, args, _): &AstOutput,
+    metadata: Metadata,
     original: &str,
 ) -> Result<String, String> {
     let mut internal: HashMap<&str, Value<V>> = HashMap::new();
@@ -85,13 +93,13 @@ pub fn run<'a, K, V: Clone>(
                             Func::Pure(f, params) => (
                                 Dirty::Ready,
                                 params.check_args(&ctx.parameters, bindings)
-                                    .and_then(|_| f.call(bindings))
+                                    .and_then(|_| f.call(bindings, Api::new(original, i, &metadata)))
                                     .map_err(|err| err.to_display(original, s, &args[cmd.args.0..cmd.args.1]))?,
                             ),
                             Func::Stateful(f, params) => {
                                 let old_output = mem::replace(&mut outputs[i].1, Value::Null);
                                 params.check_args(&ctx.parameters, bindings)
-                                    .and_then(|_| f.call(bindings, old_output, &mut external))
+                                    .and_then(|_| f.call(bindings, Api::new(original, i, &metadata), old_output, &mut external))
                                     .map_err(|err| err.to_display(original, s, &args[cmd.args.0..cmd.args.1]))?
                             }
                         };
@@ -107,7 +115,7 @@ pub fn run<'a, K, V: Clone>(
                 }
                 Label::Display => {
                     // @TODO: have errors return which argument is bad
-                    let output = concat(bindings).map_err(|e| {
+                    let output = concat(bindings, Api::new(original, i, &metadata)).map_err(|e| {
                         e.to_display(
                             original,
                             cmd.label.to_source(),

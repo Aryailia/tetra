@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::io::{Read, Write};
 
-use tetra;
+use tetra::{run, api::{FileType, Metadata}};
 //use xflags;
 
 // https://fuchsia.dev/fuchsia-src/development/api/cli#keyed_options
@@ -73,18 +73,25 @@ fn main() {
         }
     };
 
-    let ctx = tetra::run::markup::default_context();
-    let output = match ctx.compile(&contents) {
-        Ok(s) => s,
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    };
+    let ctx = run::markup::default_context();
     if let Some(path) = target_file {
+
+        let output = match ctx.compile(&contents, Metadata::new(FileType::Default, FileType::from(path.as_str()))) {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
+        };
         let mut buffer = fs::File::create(&path).unwrap();
         buffer.write(output.as_bytes()).unwrap();
     } else {
-        println!("{}", output);
+        match ctx.compile(&contents, Metadata::new(FileType::Default, FileType::AsciiDoctor)) {
+            Ok(s) => println!("{}", s),
+            Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
+        };
     }
 }

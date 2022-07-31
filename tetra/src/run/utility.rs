@@ -10,6 +10,7 @@ use std::process;
 use std::process::Stdio;
 
 use super::{Error, PureResult, Value};
+use crate::api::Api;
 
 /******************************************************************************
  * In-built Commands
@@ -20,7 +21,7 @@ use super::{Error, PureResult, Value};
 
 // Just joins its arguments into a string
 // Also doubles as the default push to the final knit
-pub fn concat<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn concat<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     let mut buffer = String::with_capacity(recursive_calc_length(args)?);
     recursive_concat::<V>(args, &mut buffer);
     Ok(Value::Text(Cow::Owned(buffer)))
@@ -58,7 +59,7 @@ fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // code
-pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn code<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     //let lang = unwrap!(or_invalid args[0] => Value::Text(x) => x);
     let lang: &str = match &args[0] {
         Value::Text(x) => x,
@@ -91,7 +92,7 @@ pub fn code<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 
 ////////////////////////////////////////////////////////////////////////////////
 // env
-pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn env<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     let name: &str = match &args[0] {
         Value::Text(s) => s,
         _ => return Err(Error::Arg(0, "Invalid type, expecting string".into())),
@@ -103,7 +104,12 @@ pub fn env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
  * Helpers
  ******************************************************************************/
 
-pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str], env: Option<Vec<(&str, &str)>>) -> Result<String, Error> {
+pub fn run_command(
+    program: &str,
+    stdin: Option<&str>,
+    args: &[&str],
+    env: Option<Vec<(&str, &str)>>,
+) -> Result<String, Error> {
     let mut process = process::Command::new(program);
     process.args(args);
     if let Some(e) = env {
@@ -144,8 +150,6 @@ pub fn run_command(program: &str, stdin: Option<&str>, args: &[&str], env: Optio
 pub fn fetch_env_var(key: &str) -> Result<String, Error> {
     Ok(std::env::vars()
         .find(|(k, _)| k == key)
-        .ok_or(Error::Generic(Cow::Owned(
-            format!("Missing {} environment variable", key)
-        )))?
+        .ok_or_else(|| Error::Generic(Cow::Owned(format!("Missing {} environment variable", key))))?
         .1)
 }

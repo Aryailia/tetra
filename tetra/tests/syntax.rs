@@ -1,8 +1,14 @@
 //run: cargo test -- --nocapture
 
+use tetra::api::{FileType, Metadata};
+
 macro_rules! compare_eq {
     ($ctx:ident, $( $source:literal => $answer:literal )*) => {
-        $( assert_eq!($ctx.compile($source).as_ref().map(String::as_str), Ok($answer)); )*
+        let metadata = Metadata::new(FileType::Markdown, FileType::HTML);
+        $( assert_eq!(
+            $ctx.compile($source, metadata.clone()).as_ref().map(String::as_str),
+            Ok($answer)
+        ); )*
     };
 }
 

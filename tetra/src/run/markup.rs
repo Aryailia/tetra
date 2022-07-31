@@ -17,6 +17,8 @@ use crate::run::utility::{fetch_env_var, run_command};
 use crate::run::value as v;
 use crate::run::{LIMITED, UNLIMITED}; // these are just bools
 
+use crate::api::{Api, FileType};
+
 // The main difference between pure and stateful functions is that
 // * pure functions run only once (once all their arguments are ready) and
 //   stateful functions until they report back that they are 'Dirty::Ready'
@@ -37,9 +39,24 @@ pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
     // "r/run <lang> <code-body>"
     ctx.register_pure_function("run", &code, LIMITED, &[v::TEXT, v::TEXT]);
     ctx.register_pure_function("r", &code, LIMITED, &[v::TEXT, v::TEXT]);
-    ctx.register_pure_function("if_equals", &if_eq_statement, LIMITED, &[v::TEXT, v::TEXT, v::TEXT]);
-    ctx.register_pure_function("run_if_equals", &run_if_equals, LIMITED, &[v::TEXT, v::TEXT, v::TEXT, v::TEXT]);
-    ctx.register_pure_function("run_env", &run_env, LIMITED, &[v::TEXT, v::TEXT, v::TEXT, v::TEXT]);
+    ctx.register_pure_function(
+        "if_equals",
+        &if_eq_statement,
+        LIMITED,
+        &[v::TEXT, v::TEXT, v::TEXT],
+    );
+    ctx.register_pure_function(
+        "run_if_equals",
+        &run_if_equals,
+        LIMITED,
+        &[v::TEXT, v::TEXT, v::TEXT, v::TEXT],
+    );
+    ctx.register_pure_function(
+        "run_env",
+        &run_env,
+        LIMITED,
+        &[v::TEXT, v::TEXT, v::TEXT, v::TEXT],
+    );
 
     ctx.register_pure_function("concat", &concat, UNLIMITED, &[]);
     ctx.register_pure_function("end", &concat, LIMITED, &[v::TEXT]);
@@ -76,6 +93,7 @@ pub enum CustomValue {
 // and then prints out the citations
 fn cite<'a>(
     args: &[Value<'a, CustomValue>],
+    api: Api<'a>,
     old_output: Value<'a, CustomValue>,
     storage: &mut Variables<'a, CustomKey, CustomValue>,
 ) -> StatefulResult<'a, CustomValue> {
@@ -121,7 +139,7 @@ fn cite<'a>(
     } else if state == 3 {
         let citekeys_value = storage.get(&CustomKey::Citations).unwrap();
         let citekeys = unwrap!(unreachable citekeys_value => Value::Text(s) => s);
-        let citerefs = pandoc_cite(citekeys)?;
+        let citerefs = pandoc_cite(citekeys, &api.meta.output_filetype)?;
         storage.insert(CustomKey::Citations, Value::Text(Cow::Owned(citerefs)));
     }
 
@@ -157,6 +175,7 @@ fn cite<'a>(
 
 fn references<'a>(
     args: &[Value<'a, CustomValue>],
+    _api: Api<'a>,
     _: Value<'a, CustomValue>,
     storage: &mut Variables<'a, CustomKey, CustomValue>,
 ) -> StatefulResult<'a, CustomValue> {
@@ -167,7 +186,7 @@ fn references<'a>(
         .map(|v| unwrap!(unreachable v => Value::Usize(x) => *x))
         .unwrap_or(0);
     match state {
-        0 | 1 | 2  => Ok((Dirty::Waiting, Value::Text(Cow::Borrowed("")))),
+        0 | 1 | 2 => Ok((Dirty::Waiting, Value::Text(Cow::Borrowed("")))),
         3 | 4 => {
             let cite_count = storage
                 .get(&CustomKey::CiteCount)
@@ -189,13 +208,30 @@ fn references<'a>(
     }
 }
 
-pub fn pandoc_cite(citekey: &str) -> Result<String, Error> {
+pub fn pandoc_cite(citekey: &str, filetype: &FileType) -> Result<String, Error> {
     let bibliography = fetch_env_var("BIBLIOGRAPHY")?;
+    let write_format = match filetype {
+        FileType::AsciiDoctor => "asciidoctor",
+        FileType::Markdown => "markdown_strict",
+        FileType::CommonMark => "commonmark",
+        FileType::RMarkdown => "markdown_strict",
+        FileType::PDF => panic!(),
+        FileType::LaTeX => "latex",
+        FileType::HTML => "html5",
+        FileType::Default => "plain",
+        FileType::Custom(_) => panic!(),
+    };
     let citation = run_command(
         "pandoc",
         Some(citekey),
         //&["--citeproc", "-M", "suppress-bibliography=true", "-t", "plain",
-        &["--citeproc", "-t", "asciidoctor", "--bibliography", &bibliography],
+        &[
+            "--citeproc",
+            "-t",
+            write_format,
+            "--bibliography",
+            &bibliography,
+        ],
         None,
     )?;
 
@@ -206,7 +242,7 @@ pub fn pandoc_cite(citekey: &str) -> Result<String, Error> {
 
 // includes other files into the current file
 // @TODO: add ability to parse those files as well
-pub fn include<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn include<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     let path: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
     let contents = fs::read_to_string(path).map_err(|err| {
         Error::Arg(
@@ -223,7 +259,7 @@ pub fn include<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 
 // includes other files into the current file
 // @TODO: add ability to parse those files as well
-pub fn if_eq_statement<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn if_eq_statement<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     let lvalue: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
     let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
     if lvalue == rvalue {
@@ -234,11 +270,11 @@ pub fn if_eq_statement<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
     }
 }
 
-pub fn run_if_equals<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn run_if_equals<'a, V>(args: &[Value<'a, V>], api: Api<'a>) -> PureResult<'a, V> {
     let lvalue: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
     let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
     if lvalue == rvalue {
-        Ok(code(&args[2..])?)
+        Ok(code(&args[2..], api)?)
     } else {
         Ok(Value::Text(Cow::Borrowed("")))
     }
@@ -248,6 +284,7 @@ pub fn run_if_equals<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 
 fn label_set<'a>(
     args: &[Value<'a, CustomValue>],
+    _api: Api<'a>,
     _: Value<'a, CustomValue>,
     storage: &mut Variables<'a, CustomKey, CustomValue>,
 ) -> StatefulResult<'a, CustomValue> {
@@ -264,10 +301,10 @@ fn label_set<'a>(
             Ok((Dirty::Ready, Value::Text(label)))
         }
     }
-
 }
 fn label<'a>(
     args: &[Value<'a, CustomValue>],
+    _api: Api<'a>,
     old_output: Value<'a, CustomValue>,
     storage: &mut Variables<'a, CustomKey, CustomValue>,
 ) -> StatefulResult<'a, CustomValue> {
@@ -290,11 +327,10 @@ fn label<'a>(
     }
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////
 
 // Same as `code()` but allows you set the environment variables
-pub fn run_env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
+pub fn run_env<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     let id: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
     let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
     let lang: &str = unwrap!(unreachable &args[2] => Value::Text(s) => s);
@@ -302,16 +338,13 @@ pub fn run_env<'a, V>(args: &[Value<'a, V>]) -> PureResult<'a, V> {
 
     match lang {
         "graphviz" | "dot" => {
-            return run_command("dot", Some(cell_body), &["-Tsvg"], Some(vec![(id, rvalue)]))
+            run_command("dot", Some(cell_body), &["-Tsvg"], Some(vec![(id, rvalue)]))
                 .map(Cow::Owned)
                 .map(Value::Text)
         }
-        "sh" => {
-            return run_command("sh", Some(cell_body), &["-s"], Some(vec![(id, rvalue)]))
-                .map(Cow::Owned)
-                .map(Value::Text)
-        }
+        "sh" => run_command("sh", Some(cell_body), &["-s"], Some(vec![(id, rvalue)]))
+            .map(Cow::Owned)
+            .map(Value::Text),
         s => todo!("markup.rs: {}", s),
     }
 }
-
