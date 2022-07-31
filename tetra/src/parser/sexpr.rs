@@ -28,7 +28,7 @@
 
 use std::fmt::Write as _; // clippy: import without risk of name clashing
 
-use super::{lexer::LexType, Item};
+use super::{lexer::LexType, Item, Label};
 use crate::framework::{Source, Token};
 
 pub struct SexprOutput(pub Vec<Sexpr>, pub Vec<Token<Item>>);
@@ -50,6 +50,7 @@ pub type ParseError = Token<&'static str>;
 pub struct Sexpr {
     // for resolving to which text cell the 'Item::Stdin' refers
     pub cell_id: usize,
+    pub head: Token<Label>,
     // Index into {SexprOutput.1}
     pub args: (usize, usize),
 
@@ -63,6 +64,8 @@ pub struct Sexpr {
 impl Sexpr {
     pub fn to_display(&self, args: &[Token<Item>], original: &str) -> String {
         let mut buffer = format!("({}): (", self.cell_id);
+        self.head.push_display(&mut buffer, original);
+        buffer.push_str(" <> ");
         for item in &args[self.args.0..self.args.1] {
             item.push_display(&mut buffer, original);
             buffer.push_str(", ");
@@ -91,6 +94,7 @@ impl Token<Item> {
             Item::Stdin => buffer.push('.'),
             // Temp variables for the output of concats, functions, etc.
             Item::Reference(i) => write!(buffer, "{{{}}}", i).unwrap(),
+            Item::Concat => buffer.push_str("#Concat("),
 
             Item::Pipe => buffer.push('|'),
             Item::PipedStdin => buffer.push_str(". | "),
@@ -398,21 +402,6 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
 //
 // Syntax checking of these s-exprs is handed off to 'parse_push()'.
 impl Fsm {
-    fn form_sexpr_and_update_cursor(&mut self, cell_id: usize) -> (Sexpr, Token<Item>) {
-        let output_id = self.out.0.len();
-        let sexpr = Sexpr {
-            cell_id,
-            args: (self.args_cursor, self.out.1.len()),
-            out: output_id,
-        };
-        self.args_cursor = self.out.1.len(); // Set before pushing infix operator
-
-        // TODO: make this the span of the 'Sexpr'
-        let source = Source::Range(0, 0);
-        let out_ref = Token::new(Item::Reference(output_id), source);
-        (sexpr, out_ref)
-    }
-
     fn sexprify(
         &mut self,
         to_process: &mut Vec<Token<Item>>,
@@ -421,24 +410,35 @@ impl Fsm {
         _debug_source: &str,
     ) -> Result<Token<Item>, ParseError> {
         // First sexpr does not have an infix operator
+        let mut close = to_process.len();
         Ok(loop {
             // Index after the infix operator
-            let post_infix = to_process[start..]
+            let post_infix = to_process[start..close]
                 .iter()
                 // Match any of the infix operators
                 .rposition(|t| matches!(t.me, Item::Assign))
                 .map(|i| i + 1)
                 .unwrap_or(0);
 
-            // '{$ a = $}' and '{| a = $}' will lead to the following being true
+            // '{$ a = $}' and '{| a = |}' will lead to the following being true
+            // In other words the slice we are processing is the empty list.
+            // Without this it pushes an s-expr to {self.out.0} which causes
+            // the 'Item::Reference()' to be incorrect, e.g.
+            //     '{| a = |}'
+            // parses to:
+            //     1: (Concat | "", )
+            //     2: (= | a, {2}, ., )
+            //
+            // we want:
+            //     :  (= | a, ., )
             if to_process[start + post_infix..].is_empty() && post_infix != 0 {
-                self.out.1.push(to_process.pop().unwrap());
+                close -= 1; // Skip over the infix operator
                 continue;
             }
 
-            self.parse_push(to_process.drain(start + post_infix..), cell_id)?;
             // Set {self.args_cursor} before pushing infix operator
-            let (sexpr, out_ref) = self.form_sexpr_and_update_cursor(cell_id);
+            let (sexpr, out_ref) =
+                self.parse_push(to_process.drain(start + post_infix..), cell_id)?;
 
             //// This is how we debug stuff
             //println!("{}", sexpr.to_display(args, _debug_source));
@@ -448,8 +448,9 @@ impl Fsm {
 
             // Infix operator present, so multiple sexpr
             if post_infix != 0 {
-                // Push the infix operator as a prefix operator
-                self.out.1.push(to_process.pop().unwrap());
+                //// Push the infix operator as a prefix operator
+                //self.out.1.push(to_process.pop().unwrap());
+                close = to_process.len() - 1; // Skip over the infix operator
                 to_process.push(out_ref);
 
             // Infix operator absent, so just one complete sexpr
@@ -460,26 +461,40 @@ impl Fsm {
         })
     }
 
-    // Syntax check an sexpr, and then pushes it onto {args}.
+    // This has four main jobs:
+    // 1. Syntax checking
+    // 2. Re-order piped-in arguments to the last argument
+    // 3. Break off single 'Item::Ident' arguments, e.g.
+    //        concat(a, cite("s"))
+    //    should parse to
+    //        (a, )
+    //        concat(<ref-to-a>, <ref-to-cite>)
+    //    This is so that it can be interpreted as a variable lookup or a
+    //    a function call in the run phase.
+    //
+    // 4. Push the final s-exprs into the output array
     // Also moves piped args to the last argument.
     fn parse_push(
         &mut self,
         to_process: std::vec::Drain<Token<Item>>,
         cell_id: usize,
-    ) -> Result<(), ParseError> {
+    ) -> Result<(Sexpr, Token<Item>), ParseError> {
         // Imagine we are building a function. Broadly, the cases are:
         // 1. 'first(arg1, arg2, arg3...)'
         // 2. '| "hello" first(arg1, arg2, arg3...)
         //    or
         //    '.|  first(arg1, arg2, arg3...)'
         // 3. concat is the default when function ident is not an Item::Ident
+        #[derive(Debug)]
         enum M {
-            // Handling the first argument
-            First,    // As in the (potential) function ident
-            PipedArg, // First arg was a Item::Pipe, so the piped arg
-
+            // Handling the first argument and maybe pipe logic
+            First,         // As in the (potential) function ident
+            PipedArg,      // First arg was a Item::Pipe, so the piped arg
             PipelessFirst, // Now that piped is handled, definintely function ident
-            Concat,        // If not an 'Item::Ident' or 'Item::Func', then default here
+
+            // Different types of arguments
+            Concat, // If not an 'Item::Ident' or 'Item::Func', then default here
+            Assign,
 
             // Handling the other arguments for a fucntion call
             ExpectArg,
@@ -487,12 +502,16 @@ impl Fsm {
         }
         let mut piped_arg: Option<Token<Item>> = None;
         let mut state = M::First;
-        let mut prev = &Item::Str;
+        let mut head = None;
 
-        for item in to_process {
+        let mut iter = to_process.peekable();
+        while let Some(item) = iter.next() {
+            let peek = iter.peek().map(|t| &t.me);
             match (&state, &item.me) {
                 (_, Item::Paren | Item::Stmt) => unreachable!(),
 
+                ////////////////////////////////////////////////////////////////
+                // Determine what kind of s-expr it is: Assign, Concat, Function
                 // Might start with pipes
                 (M::First, Item::Pipe) => {
                     state = M::PipedArg;
@@ -503,16 +522,37 @@ impl Fsm {
                     state = M::PipelessFirst;
                     continue // Do not push because {item} is taken by {piped_arg}
                 }
-                // Else, it is a function call if {item} is ident
-                (M::First, Item::Ident | Item::Func) => state = M::ExpectArg,
 
 
-                // or just the first arg of a concat otherwise
                 (M::First, Item::Comma) => return Err(item.remap("Unexpected comma. Interpreting the previous Ident as a function call. Should this comma be a open parenthesis?")),
-                (M::First, _) =>  state = M::Concat,
+                (M::First | M::PipelessFirst, Item::Ident | Item::Func) if matches!(peek, Some(Item::Assign)) => {
+                    state = M::Assign;
+                    debug_assert!(head.is_none());
+                    head = iter.next().map(|item| item.remap(Label::Assign));
+                    bound_push!(self.buffer2, item);
+                    continue
 
-                (_,  Item::Pipe) => return Err(item.remap("You can not have double pipes")),
-                (_,  Item::PipedStdin) => unreachable!(),
+                }
+                (M::First | M::PipelessFirst, Item::Ident) => {
+                    state = M::ExpectArg;
+                    debug_assert!(head.is_none());
+                    head = Some(item.remap(Label::Ident));
+                    continue;
+                }
+                (M::First | M::PipelessFirst, Item::Func) => {
+                    state = M::ExpectArg;
+                    debug_assert!(head.is_none());
+                    head = Some(item.remap(Label::Func));
+                    continue;
+                }
+                (M::First, _) => {
+                    state = M::Concat;
+                    bound_push!(self.buffer2, item);
+                }
+
+                (_, Item::Assign) => return Err(item.remap("Unexpected assign")),
+                (_, Item::Pipe) => return Err(item.remap("You can not have double pipes")),
+                (_, Item::PipedStdin) => unreachable!(),
 
                 // Second argument if first was a pipe
                 (M::PipedArg, _) => {
@@ -524,42 +564,61 @@ impl Fsm {
                 // The first without pipes or second/third argument after pipes arg
                 // Like M::First (either the function ident or first arg of concat),
                 // except there should be no pipes
-                (M::PipelessFirst, Item::Ident | Item::Func) => state = M::ExpectArg,
-                (M::PipelessFirst, _) => state = M::Concat,
+
+                // Already handled above
+                //(M::PipelessFirst, Item::Ident | Item::Func) if matches!(peek, Some(Item::Assign)) => {
+                //(M::PipelessFirst, Item::Ident | Item::Func) => {
+                (M::PipelessFirst, _) => {
+                    state = M::Concat;
+                    bound_push!(self.buffer2, item);
+                }
+
+                ////////////////////////////////////////////////////////////////
+                // S-expr type determined
 
                 // Above should catch all the non-argument entries
-                (M::Concat, Item::Comma) => return Err(item.remap("Unexpected comma. There is no function call for this list of arguments.")),
-                (M::Concat, _) => {} // Concat accepts all arguments
+                (M::Concat | M::Assign, Item::Comma) => return Err(item.remap("Unexpected comma. There is no function call for this list of arguments.")),
+                (M::Concat, _) => bound_push!(self.buffer2, item),
+                (M::Assign, _) => bound_push!(self.buffer2, item),
+
+
+
+
+
+                ////////////////////////////////////////////////////////////////
+                // Function
 
                 (M::ExpectArg, Item::Comma) => return Err(item.remap("No value provided")),
+                (M::ExpectArg, _) if matches!(peek, Some(Item::Ident | Item::Func)) => {
+                    return Err(item.remap("Expected comma. If this is part of a function call, you need a paren to disambiguate this."));
+                }
                 (M::ExpectArg, Item::Ident) => {
                     // Single argument idents must be pushed as their own
                     // s-expr since we cannot determine if they are variables
                     // or function calls
-                    bound_push!(self.out.1, item);
+                    //bound_push!(self.out.1, item);
 
-                    let (sexpr, out_ref) = self.form_sexpr_and_update_cursor(cell_id);
-                    self.buffer2.push(out_ref);
+                    let source = item.source.clone();
+                    let label = item.remap(Label::Ident);
+                    let (sexpr, out_item) = self.form_sexpr_and_update_cursor(label, cell_id);
+                    self.buffer2.push(Token::new(out_item, source));
                     bound_push!(self.out.0, sexpr);
-                    prev = &Item::Reference(usize::MAX);
 
                     state = M::ExpectComma;
                     continue
                 }
-                (M::ExpectArg, _) => state = M::ExpectComma,
+                (M::ExpectArg, _) => {
+                    state = M::ExpectComma;
+                    bound_push!(self.buffer2, item);
+                }
 
                 (M::ExpectComma, Item::Comma) => {
                     state = M::ExpectArg;
                     continue // Do not push
                 }
-                (M::ExpectComma, _) if matches!(prev, Item::Ident | Item::Func) => {
-                    return Err(item.remap("Expected comma. If this is part of a function call, you need a paren to disambiguate this."));
-                }
                 (M::ExpectComma, _) => return Err(item.remap("Expect a comma before here.")),
 
             }
-            bound_push!(self.buffer2, item);
-            prev = &self.buffer2[self.buffer2.len() - 1].me;
         }
         if let Some(a) = piped_arg {
             bound_push!(self.buffer2, a);
@@ -569,9 +628,31 @@ impl Fsm {
         debug_assert!(!self
             .buffer2
             .iter()
-            .any(|t| matches!(t.me, Item::Comma | Item::Paren | Item::Stmt)));
+            .any(|t| matches!(t.me, Item::Concat | Item::Comma | Item::Paren | Item::Stmt)));
         self.out.1.append(&mut self.buffer2);
-        Ok(())
+
+        // @TODO: make this the span of the 'Sexpr'
+        let source = Source::Range(0, 0);
+        let default = Token::new(Label::Concat, source.clone());
+        let (sexpr, out_item) = self.form_sexpr_and_update_cursor(head.unwrap_or(default), cell_id);
+        Ok((sexpr, Token::new(out_item, source)))
+    }
+
+    fn form_sexpr_and_update_cursor(
+        &mut self,
+        head: Token<Label>,
+        cell_id: usize,
+    ) -> (Sexpr, Item) {
+        let output_id = self.out.0.len();
+        let sexpr = Sexpr {
+            cell_id,
+            head,
+            args: (self.args_cursor, self.out.1.len()),
+            out: output_id,
+        };
+        self.args_cursor = self.out.1.len(); // Set before pushing infix operator
+
+        (sexpr, Item::Reference(output_id))
     }
 }
 

@@ -1,15 +1,15 @@
 //run: cargo test -- --nocapture
 
-use std::collections::HashMap;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::mem;
 
 use super::utility::concat;
 use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
-use crate::framework::Token;
-use crate::parser::{AstOutput, Item, Command, Label};
 use crate::api::{Api, Metadata};
+use crate::framework::Token;
+use crate::parser::{AstOutput, Command, Item, Label};
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -21,7 +21,12 @@ use crate::api::{Api, Metadata};
 const ITERATION_LIMIT: usize = 1000;
 
 impl<'a, K, V: Clone> Bindings<'a, K, V> {
-    pub fn run(&self, ast: &AstOutput, metadata: Metadata, original: &str) -> Result<String, String> {
+    pub fn run(
+        &self,
+        ast: &AstOutput,
+        metadata: Metadata,
+        original: &str,
+    ) -> Result<String, String> {
         run(self, ast, metadata, original)
     }
 }
@@ -62,8 +67,8 @@ pub fn run<'a, K, V: Clone>(
             }
 
             let bindings = &binded_args[cmd.args.0..cmd.args.1];
-            match &cmd.label {
-                Label::Assign(_) => {
+            match cmd.label.me {
+                Label::Assign => {
                     let lvalue = &args[cmd.args.0];
                     let name = lvalue.source.to_str(original);
                     debug_assert!(matches!(lvalue.me, Item::Ident), "{:?}", lvalue);
@@ -80,48 +85,69 @@ pub fn run<'a, K, V: Clone>(
                     internal.insert(name, bindings[1].clone());
                     outputs[i] = (Dirty::Ready, bindings[1].clone());
                 }
-                Label::Ident(s) => {
-                    let name = s.to_str(original);
-                    if let Some(var) = internal.get_mut(name) {
-                        outputs[i] = if ast[i].reverse_dependant_count() == 0 {
-                            (Dirty::Ready, mem::replace(var, Value::Null))
-                        } else {
-                            (Dirty::Ready, var.clone())
-                        };
-                    } else if let Some(func) = ctx.functions.get(name) {
-                        let output = match func {
+                Label::Ident | Label::Func => {
+                    let name = cmd.label.to_str(original);
+                    match (&cmd.label.me, internal.get_mut(name), ctx.functions.get(name)) {
+                        (_, Some(_), Some(_)) => unreachable!(),
+                        (Label::Func, Some(_), _) => unreachable!(),
+
+                        (_, None, Some(func)) => outputs[i] = match func {
                             Func::Pure(f, params) => (
                                 Dirty::Ready,
-                                params.check_args(&ctx.parameters, bindings)
-                                    .and_then(|_| f.call(bindings, Api::new(original, i, &metadata)))
-                                    .map_err(|err| err.to_display(original, s, &args[cmd.args.0..cmd.args.1]))?,
+                                params
+                                    .check_args(&ctx.parameters, bindings)
+                                    .and_then(|_| {
+                                        f.call(bindings, Api::new(original, i, &metadata))
+                                    })
+                                    .map_err(|err| {
+                                        err.to_display(
+                                            original,
+                                            &cmd.label.source,
+                                            &args[cmd.args.0..cmd.args.1],
+                                        )
+                                    })?,
                             ),
                             Func::Stateful(f, params) => {
                                 let old_output = mem::replace(&mut outputs[i].1, Value::Null);
-                                params.check_args(&ctx.parameters, bindings)
-                                    .and_then(|_| f.call(bindings, Api::new(original, i, &metadata), old_output, &mut external))
-                                    .map_err(|err| err.to_display(original, s, &args[cmd.args.0..cmd.args.1]))?
+                                params
+                                    .check_args(&ctx.parameters, bindings)
+                                    .and_then(|_| {
+                                        f.call(
+                                            bindings,
+                                            Api::new(original, i, &metadata),
+                                            old_output,
+                                            &mut external,
+                                        )
+                                    })
+                                    .map_err(|err| {
+                                        err.to_display(
+                                            original,
+                                            &cmd.label.source,
+                                            &args[cmd.args.0..cmd.args.1],
+                                        )
+                                    })?
                             }
-                        };
-                        outputs[i] = output;
-                        //outputs[i] = (Dirty::Ready, Value::Text("|"));
-                    } else {
-                        return Err(format!(
+                        },
+                        (_, Some(var), None) => {
+                            outputs[i] = if ast[i].reverse_dependant_count() == 0 {
+                                (Dirty::Ready, mem::replace(var, Value::Null))
+                            } else {
+                                (Dirty::Ready, var.clone())
+                            };
+                        }
+                        _ => return Err(format!(
                             "{} {}",
-                            s.get_context(original),
+                            cmd.label.get_context(original),
                             "No function or variable named this.",
-                        ));
+                        ))
                     }
                 }
-                Label::Display => {
+                Label::Concat => {
                     // @TODO: have errors return which argument is bad
-                    let output = concat(bindings, Api::new(original, i, &metadata)).map_err(|e| {
-                        e.to_display(
-                            original,
-                            cmd.label.to_source(),
-                            &args[cmd.args.0..cmd.args.1],
-                        )
-                    })?;
+                    let output =
+                        concat(bindings, Api::new(original, i, &metadata)).map_err(|e| {
+                            e.to_display(original, &cmd.label.source, &args[cmd.args.0..cmd.args.1])
+                        })?;
                     outputs[i] = (Dirty::Ready, output);
                 }
             }
@@ -168,8 +194,15 @@ impl Command {
                 Item::Reference(_) => Value::Null,
                 //Item::Reference
                 Item::Ident => Value::Null, // First arg of assign is the only place
-                Item::Func | Item::Assign | Item::Stdin | Item::PipedStdin
-                    | Item::Pipe | Item::Comma | Item::Paren | Item::Stmt => unreachable!(),
+                Item::Concat
+                | Item::Func
+                | Item::Assign
+                | Item::Stdin
+                | Item::PipedStdin
+                | Item::Pipe
+                | Item::Comma
+                | Item::Paren
+                | Item::Stmt => unreachable!(),
             });
         }
     }

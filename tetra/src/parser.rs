@@ -4,11 +4,16 @@ mod lexer;
 mod sexpr;
 
 pub use sexpr::SexprOutput;
-pub use ast::{AstOutput, Command, Label};
+pub use ast::{AstOutput, Command};
 
 pub use lexer::process as step1_lex;
 pub use sexpr::process as step2_to_sexpr;
 pub use ast::process as step3_to_ast;
+
+use crate::framework::Token;
+
+
+// @TODO: remove clone from these enums
 
 // The elements of an s-expr. The syntaxemes. For "sexpr.rs"
 // We only want `derive(Eq)` for the test in 'lib.rs'. '--test' runs in debug
@@ -26,6 +31,7 @@ pub enum Item {
     // @TODO: Check if this has to be different from Arg::Stdin
     //        I expect this to catch ". cite" expressions
     Reference(usize), // Id that should match {Sexpr.out}. Index into {SexprOutput.0}
+    Concat,
 
     // The following are just for parsing, but are not included in args {SexprOutput.1}
     Comma,
@@ -36,15 +42,38 @@ pub enum Item {
     Stmt,
 }
 
-//// 'Item' but trimmed down to just the types. For "ast.rs" and "run/*".
-//pub enum Param {
-//    Str,
-//    Char(&'static str),
-//    Ident,
-//    Func,
-//    Reference(usize),
-//}
+// 'Item' but trimmed down to just the types. For "ast.rs" and "run/*".
+#[derive(Clone, Debug)]
+pub enum Param {
+    Str,
+    Literal(&'static str),
+    Ident,
+    Func,
+    Reference(usize),
+}
 
+#[derive(Clone, Debug)]
+#[cfg_attr(debug_assertions, derive(PartialEq, Eq))]
+pub enum Label {
+    Assign, // "<l-value> = <r-value>"
+    Concat, // Just display all the arguments as is
+    Ident,  // Variable lookup or a function call
+    Func,   // Function call
+}
+
+impl Token<Label> {
+    pub fn push_display(&self, buffer: &mut String, original: &str) {
+        match self.me {
+            Label::Assign => buffer.push('='),
+            Label::Concat => buffer.push_str("#Concat"),
+            Label::Func => {
+                buffer.push_str(self.to_str(original));
+                buffer.push('(');
+            }
+            Label::Ident => buffer.push_str(self.to_str(original)),
+        }
+    }
+}
 
 
 // TODO: Mostly a reminder that we want to pre-allocate everything the parser

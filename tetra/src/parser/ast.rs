@@ -5,15 +5,15 @@
 // and removes gaps.
 
 use super::sexpr::Sexpr;
-use super::{Item, SexprOutput};
-use crate::framework::{Source, Token};
+use super::{Label, Item, SexprOutput};
+use crate::framework::Token;
 
 pub struct AstOutput(pub Vec<Command>, pub Vec<Token<Item>>, pub Vec<usize>);
 pub type ParseError = Token<&'static str>;
 
 #[derive(Debug)]
 pub struct Command {
-    pub label: Label,
+    pub label: Token<Label>,
     pub args: (usize, usize),
     pub provides_for: (usize, usize),
 }
@@ -88,7 +88,7 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
     sorted_exprs.retain(|exp| {
         let first_index = exp.args.0;
         let len = exp.args.1 - first_index;
-        if len == 1 {
+        if matches!(exp.head.me, Label::Concat) && len == 1 {
             match resolved_args[first_index].me {
                 // Replace a pointer to a literal with just the literal
                 Item::Str | Item::Text(_) => {
@@ -142,23 +142,12 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
     let mut gapless_args = Vec::with_capacity(arg_defs.len());
     let mut dependencies = Vec::with_capacity(arg_defs.len());
     for (i, exp) in sorted_exprs.iter().enumerate() {
-        let len = exp.args.1 - exp.args.0;
-
         // Discriminate label from parameters
-        let (label, skip) = (len > 0)
-            .then(|| {
-                let first_arg = &resolved_args[exp.args.0];
-                match first_arg.me {
-                    Item::Ident | Item::Func => (Label::Ident(first_arg.source.clone()), 1),
-                    Item::Assign => (Label::Assign(first_arg.source.clone()), 1),
-                    _ => (Label::Display, 0),
-                }
-            })
-            .unwrap_or((Label::Display, 0));
+        let label = exp.head.clone();
 
         // Build {gapless_args} by removing the gaps in {resolved_args}
         let new_start = gapless_args.len();
-        for a in &resolved_args[exp.args.0 + skip..exp.args.1] {
+        for a in &resolved_args[exp.args.0..exp.args.1] {
             match a.me {
                 // Change from 'Reference(<id>)' to 'Reference(<index into {output}>)'
                 Item::Reference(j) => {
@@ -246,39 +235,17 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
 
 
 
-#[derive(Debug)]
-pub enum Label {
-    Assign(Source), // "<l-value> = <r-value>"
-    Display,        // Just display all the arguments as is
-    Ident(Source),  //
-}
-
-impl Label {
-    pub fn to_source(&self) -> &Source {
-        match self {
-            Label::Assign(s) => s,
-            Label::Display => todo!(),
-            Label::Ident(s) => s,
-        }
-    }
-}
-
 impl Command {
-    //#[Config(debug)]
     pub fn to_display(&self, args: &[Token<Item>], source: &str) -> String {
         let mut display = String::new();
-        display.push_str(match &self.label {
-            Label::Assign(_) => "=",
-            Label::Display => "Concat",
-            Label::Ident(s) => s.to_str(source),
-        });
-        display.push('(');
+        self.label.push_display(&mut display, source);
+        display.push('[');
 
         for arg in &args[self.args.0..self.args.1] {
             arg.push_display(&mut display, source);
             display.push_str(", ");
         }
-        display.push(')');
+        display.push(']');
         display
     }
 }
