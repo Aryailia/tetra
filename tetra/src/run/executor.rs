@@ -9,7 +9,7 @@ use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
 use crate::api::{Api, Metadata};
 use crate::framework::Token;
-use crate::parser::{AstOutput, Command, Item, Label};
+use crate::parser::{AstOutput, Command, Label, Param};
 
 //#[derive(Debug, Eq, Hash, PartialEq)]
 //enum Id<'source, CustomKey> {
@@ -71,7 +71,7 @@ pub fn run<'a, K, V: Clone>(
                 Label::Assign => {
                     let lvalue = &args[cmd.args.0];
                     let name = lvalue.source.to_str(original);
-                    debug_assert!(matches!(lvalue.me, Item::Ident), "{:?}", lvalue);
+                    debug_assert!(matches!(lvalue.me, Param::Ident), "{:?}", lvalue);
                     debug_assert_eq!(2, bindings.len());
 
                     if ctx.functions.get(name).is_some() {
@@ -87,47 +87,53 @@ pub fn run<'a, K, V: Clone>(
                 }
                 Label::Ident | Label::Func => {
                     let name = cmd.label.to_str(original);
-                    match (&cmd.label.me, internal.get_mut(name), ctx.functions.get(name)) {
+                    match (
+                        &cmd.label.me,
+                        internal.get_mut(name),
+                        ctx.functions.get(name),
+                    ) {
                         (_, Some(_), Some(_)) => unreachable!(),
                         (Label::Func, Some(_), _) => unreachable!(),
 
-                        (_, None, Some(func)) => outputs[i] = match func {
-                            Func::Pure(f, params) => (
-                                Dirty::Ready,
-                                params
-                                    .check_args(&ctx.parameters, bindings)
-                                    .and_then(|_| {
-                                        f.call(bindings, Api::new(original, i, &metadata))
-                                    })
-                                    .map_err(|err| {
-                                        err.to_display(
-                                            original,
-                                            &cmd.label.source,
-                                            &args[cmd.args.0..cmd.args.1],
-                                        )
-                                    })?,
-                            ),
-                            Func::Stateful(f, params) => {
-                                let old_output = mem::replace(&mut outputs[i].1, Value::Null);
-                                params
-                                    .check_args(&ctx.parameters, bindings)
-                                    .and_then(|_| {
-                                        f.call(
-                                            bindings,
-                                            Api::new(original, i, &metadata),
-                                            old_output,
-                                            &mut external,
-                                        )
-                                    })
-                                    .map_err(|err| {
-                                        err.to_display(
-                                            original,
-                                            &cmd.label.source,
-                                            &args[cmd.args.0..cmd.args.1],
-                                        )
-                                    })?
+                        (_, None, Some(func)) => {
+                            outputs[i] = match func {
+                                Func::Pure(f, params) => (
+                                    Dirty::Ready,
+                                    params
+                                        .check_args(&ctx.parameters, bindings)
+                                        .and_then(|_| {
+                                            f.call(bindings, Api::new(original, i, &metadata))
+                                        })
+                                        .map_err(|err| {
+                                            err.to_display(
+                                                original,
+                                                &cmd.label.source,
+                                                &args[cmd.args.0..cmd.args.1],
+                                            )
+                                        })?,
+                                ),
+                                Func::Stateful(f, params) => {
+                                    let old_output = mem::replace(&mut outputs[i].1, Value::Null);
+                                    params
+                                        .check_args(&ctx.parameters, bindings)
+                                        .and_then(|_| {
+                                            f.call(
+                                                bindings,
+                                                Api::new(original, i, &metadata),
+                                                old_output,
+                                                &mut external,
+                                            )
+                                        })
+                                        .map_err(|err| {
+                                            err.to_display(
+                                                original,
+                                                &cmd.label.source,
+                                                &args[cmd.args.0..cmd.args.1],
+                                            )
+                                        })?
+                                }
                             }
-                        },
+                        }
                         (_, Some(var), None) => {
                             outputs[i] = if ast[i].reverse_dependant_count() == 0 {
                                 (Dirty::Ready, mem::replace(var, Value::Null))
@@ -135,11 +141,13 @@ pub fn run<'a, K, V: Clone>(
                                 (Dirty::Ready, var.clone())
                             };
                         }
-                        _ => return Err(format!(
-                            "{} {}",
-                            cmd.label.get_context(original),
-                            "No function or variable named this.",
-                        ))
+                        _ => {
+                            return Err(format!(
+                                "{} {}",
+                                cmd.label.get_context(original),
+                                "No function or variable named this.",
+                            ))
+                        }
                     }
                 }
                 Label::Concat => {
@@ -184,33 +192,24 @@ impl Command {
     pub fn init_args<'a, V>(
         &self,
         original: &'a str,
-        args: &[Token<Item>],
+        args: &[Token<Param>],
         bindings: &mut Vec<Value<'a, V>>,
     ) {
         for arg in &args[self.args.0..self.args.1] {
             bindings.push(match arg.me {
-                Item::Str => Value::Text(Cow::Borrowed(arg.to_str(original))),
-                Item::Text(s) => Value::Text(Cow::Borrowed(s)),
-                Item::Reference(_) => Value::Null,
-                //Item::Reference
-                Item::Ident => Value::Null, // First arg of assign is the only place
-                Item::Concat
-                | Item::Func
-                | Item::Assign
-                | Item::Stdin
-                | Item::PipedStdin
-                | Item::Pipe
-                | Item::Comma
-                | Item::Paren
-                | Item::Stmt => unreachable!(),
+                Param::Str => Value::Text(Cow::Borrowed(arg.to_str(original))),
+                Param::Literal(s) => Value::Text(Cow::Borrowed(s)),
+                Param::Ident => Value::Null, // First arg of assign is the only place
+                Param::Reference(_) => Value::Null,
+                //Param::Reference
             });
         }
     }
 
-    fn are_args_ready<V>(&self, args: &[Token<Item>], outputs: &[DirtyValue<V>]) -> bool {
+    fn are_args_ready<V>(&self, args: &[Token<Param>], outputs: &[DirtyValue<V>]) -> bool {
         let mut is_ready = true;
         for arg in &args[self.args.0..self.args.1] {
-            if let Item::Reference(j) = arg.me {
+            if let Param::Reference(j) = arg.me {
                 is_ready &= matches!(outputs[j].0, Dirty::Ready);
             }
         }
@@ -220,13 +219,13 @@ impl Command {
     fn load_args<'a, V: Clone>(
         &self,
         ast: &[Command],
-        args: &[Token<Item>],
+        args: &[Token<Param>],
         bindings: &mut [Value<'a, V>],
         outputs: &mut [DirtyValue<'a, V>],
     ) {
         let start = self.args.0;
         for (i, arg) in args[start..self.args.1].iter().enumerate() {
-            if let Item::Reference(j) = arg.me {
+            if let Param::Reference(j) = arg.me {
                 // If {outputs[j]} has no dependents, we can just steal it
                 bindings[start + i] = if ast[j].reverse_dependant_count() == 0 {
                     mem::replace(&mut outputs[j].1, Value::Null)

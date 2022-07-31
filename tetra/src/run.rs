@@ -27,7 +27,7 @@ pub use function::{Dirty, DirtyValue, LIMITED, UNLIMITED};
 
 use crate::api::Metadata;
 use crate::framework::Source;
-use crate::parser::{self, AstOutput, Item};
+use crate::parser::{self, AstOutput, Param};
 use crate::Token;
 
 use std::borrow::Cow;
@@ -45,7 +45,7 @@ pub enum Error {
 
 impl Error {
     // @TODO: consider whether to output Cow<str> or not
-    fn to_display(&self, original: &str, label: &Source, args: &[Token<Item>]) -> String {
+    fn to_display(&self, original: &str, label: &Source, args: &[Token<Param>]) -> String {
         println!("{:?} {:?}", args, self);
         match self {
             Error::Arg(i, s) => format!("{} {}", args[*i].source.get_context(original), s),

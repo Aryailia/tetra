@@ -79,39 +79,6 @@ impl Sexpr {
     }
 }
 
-impl Token<Item> {
-    pub fn push_display(&self, buffer: &mut String, source: &str) {
-        match self.me {
-            Item::Str => write!(buffer, "{:?}", self.to_str(source)).unwrap(),
-            Item::Text(s) => write!(buffer, "{:?}", s).unwrap(),
-            Item::Assign => buffer.push('='),
-            // This is either a variable or function identifier
-            Item::Ident => buffer.push_str(self.to_str(source)),
-            Item::Func => {
-                buffer.push_str(self.to_str(source));
-                buffer.push('(');
-            }
-            Item::Stdin => buffer.push('.'),
-            // Temp variables for the output of concats, functions, etc.
-            Item::Reference(i) => write!(buffer, "{{{}}}", i).unwrap(),
-            Item::Concat => buffer.push_str("#Concat("),
-
-            Item::Pipe => buffer.push('|'),
-            Item::PipedStdin => buffer.push_str(". | "),
-
-            //Item::Comma => buffer.push_str("\\,"),
-            Item::Comma => unreachable!(),
-            Item::Paren | Item::Stmt => unreachable!(),
-        }
-    }
-
-    pub fn print(&self, source: &str) {
-        let mut buffer = String::new();
-        self.push_display(&mut buffer, source);
-        print!("{}", buffer);
-    }
-}
-
 struct Fsm {
     args_cursor: usize,
     out: SexprOutput,
@@ -236,7 +203,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
                 stmt_cursor = to_process.len();
                 balance.push((Item::Stmt, to_process.len()));
             }
-            (Mode::Text, LexType::Literal(s)) => bound_push!(to_process, l.remap(Item::Text(s))),
+            (Mode::Text, LexType::Literal(s)) => bound_push!(to_process, l.remap(Item::Literal(s))),
 
             ////////////////////////////////////////////////////////////////////
             //(Mode::Code, LexType::BlockComment) => debug_print_token!(die@l, debug_source),
@@ -330,7 +297,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
                 bound_push!(to_process, l.remap(Item::Str));
             }
             (Mode::Quote, LexType::QuoteEscaped(s)) => {
-                bound_push!(to_process, l.remap(Item::Text(s)));
+                bound_push!(to_process, l.remap(Item::Literal(s)));
             }
             (Mode::Quote, LexType::QuoteClose) => {
                 mode = Mode::Code;

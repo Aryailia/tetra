@@ -5,10 +5,10 @@
 // and removes gaps.
 
 use super::sexpr::Sexpr;
-use super::{Label, Item, SexprOutput};
+use super::{Item, Label, Param, SexprOutput};
 use crate::framework::Token;
 
-pub struct AstOutput(pub Vec<Command>, pub Vec<Token<Item>>, pub Vec<usize>);
+pub struct AstOutput(pub Vec<Command>, pub Vec<Token<Param>>, pub Vec<usize>);
 pub type ParseError = Token<&'static str>;
 
 #[derive(Debug)]
@@ -60,11 +60,27 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
             bound_push!(
                 resolved_args,
                 match arg.me {
-                    Item::Stdin => arg.remap(Item::Reference(output_id)),
+                    Item::Stdin => arg.remap(Param::Reference(output_id)),
+                    Item::Ident if i >= 1 => unreachable!(
+                        "\n{:?}\nThese should all be Item::Reference()\n",
+                        exp.to_debug(arg_defs)
+                    ),
+
+                    Item::Str => arg.remap(Param::Str),
+                    Item::Literal(s) => arg.remap(Param::Literal(s)),
+                    Item::Ident => arg.remap(Param::Ident),
+                    Item::Reference(id) => arg.remap(Param::Reference(id)),
+
                     // These branches made impossible by sexpr.rs parse step
-                    Item::Assign | Item::Func if i >= 1 => unreachable!(),
-                    Item::Ident if i >= 2 => unreachable!("\n{:?}\n", exp.to_debug(arg_defs)),
-                    _ => arg.clone(),
+                    Item::Func
+                    | Item::Pipe
+                    | Item::PipedStdin
+                    | Item::Assign
+                    | Item::Concat
+                    | Item::Comma
+                    | Item::Paren
+                    | Item::Stmt => unreachable!(),
+                    //_ => arg.clone(),
                 }
             );
 
@@ -91,11 +107,11 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
         if matches!(exp.head.me, Label::Concat) && len == 1 {
             match resolved_args[first_index].me {
                 // Replace a pointer to a literal with just the literal
-                Item::Str | Item::Text(_) => {
+                Param::Str | Param::Literal(_) => {
                     let (first, rest) = resolved_args[first_index..].split_at_mut(1);
                     let first_arg = &first[0];
                     rest.iter_mut().for_each(|arg| {
-                        if let Item::Reference(i) = arg.me {
+                        if let Param::Reference(i) = arg.me {
                             if i == exp.out {
                                 *arg = first_arg.clone();
                             }
@@ -107,11 +123,11 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
 
                 // Replace double pointers with a direct pointer
                 // e.g. `{1} -> {2} -> {3}` replaced with `{1} -> {3}`
-                Item::Reference(old_i) => {
+                Param::Reference(old_i) => {
                     resolved_args[first_index + 1..].iter_mut().for_each(|arg| {
-                        if let Item::Reference(i) = arg.me {
+                        if let Param::Reference(i) = arg.me {
                             if i == exp.out {
-                                arg.me = Item::Reference(old_i);
+                                arg.me = Param::Reference(old_i);
                             }
                         }
                     });
@@ -128,7 +144,7 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
     // Parse {resolved_args} and {sorted_exprs} into a Vec<Command> and {resolved_args}
     //
     // Map ids of the output of each s-expr to their indices in {sorted_exprs}
-    // for use in changing 'Item::Reference(<id>)' to 'Item::Reference(<index>)'
+    // for use in changing 'Param::Reference(<id>)' to 'Param::Reference(<index>)'
     // in the final loop
     let mut output_indices = vec![0; sexprs.len()];
     for (i, exp) in sorted_exprs.iter().enumerate() {
@@ -150,9 +166,9 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
         for a in &resolved_args[exp.args.0..exp.args.1] {
             match a.me {
                 // Change from 'Reference(<id>)' to 'Reference(<index into {output}>)'
-                Item::Reference(j) => {
+                Param::Reference(j) => {
                     let index = output_indices[j];
-                    bound_push!(gapless_args, a.remap(Item::Reference(index)));
+                    bound_push!(gapless_args, a.remap(Param::Reference(index)));
                     bound_push!(dependencies, (index, i));
                 }
                 _ => bound_push!(gapless_args, a.clone()),
@@ -233,10 +249,8 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
     //Err(Token::new("Finished parsing", Source::Range(0, 0)))
 }
 
-
-
 impl Command {
-    pub fn to_display(&self, args: &[Token<Item>], source: &str) -> String {
+    pub fn to_display(&self, args: &[Token<Param>], source: &str) -> String {
         let mut display = String::new();
         self.label.push_display(&mut display, source);
         display.push('[');
