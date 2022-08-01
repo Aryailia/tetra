@@ -163,8 +163,10 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
     let mut fsm = Fsm {
         args_cursor: 0, // cursor into {fsm.out.1}
         out: SexprOutput(
-            Vec::with_capacity(lexemes.len()),
-            Vec::with_capacity(lexemes.len()),
+            // @TODO: Justify this + 2, small tests in "syntax.rs" were
+            //        running into this bound with 'push_parse()'
+            Vec::with_capacity(lexemes.len() + 2),
+            Vec::with_capacity(lexemes.len() + 2),
         ),
         buffer2: Vec::with_capacity(to_process.capacity()),
     };
@@ -468,7 +470,6 @@ impl Fsm {
         enum M {
             // Handling the first argument and maybe pipe logic
             First,         // As in the (potential) function ident
-            PipedArg,      // First arg was a Item::Pipe, so the piped arg
             PipelessFirst, // Now that piped is handled, definintely function ident
 
             // Different types of arguments
@@ -493,64 +494,61 @@ impl Fsm {
                 // Determine what kind of s-expr it is: Assign, Concat, Function
                 // Might start with pipes
                 (M::First, Item::Pipe) => {
-                    state = M::PipedArg;
-                    continue // Do not push the Item::Pipe
+                    if let Some(arg) = iter.next() {
+
+                        match &arg.me {
+                            //Item::Colon |
+                                Item::Comma => {
+                                return Err(arg.remap("Expecting an argument before the pipe."))
+                            }
+                            _ => piped_arg = Some(arg),
+                        }
+                    }
+                    state = M::PipelessFirst;
+
                 }
                 (M::First, Item::PipedStdin) => {
                     piped_arg = Some(item.remap(Item::Stdin));
                     state = M::PipelessFirst;
-                    continue // Do not push because {item} is taken by {piped_arg}
                 }
 
+                // 'process()' ensures we only ever have pipe per statement
+                (_, Item::PipedStdin | Item::Pipe) => unreachable!(),
 
-                (M::First, Item::Comma) => return Err(item.remap("Unexpected comma. Interpreting the previous Ident as a function call. Should this comma be a open parenthesis?")),
+                ////////////////////////////////////////////////////////////////
+                // First but without pipes
+                //(M::First | M::PipelessFirst, Item::Colon) => {
+                //    return Err(item.remap("Unexpected comma. Interpreting the previous Ident as a function call. Should this comma be a open parenthesis?"))
+                //}
+                (M::First | M::PipelessFirst, Item::Comma) => {
+                    return Err(item.remap("Unexpected comma. Interpreting the previous Ident as a function call. Should this comma be a open parenthesis?"))
+                }
                 (M::First | M::PipelessFirst, Item::Ident | Item::Func) if matches!(peek, Some(Item::Assign)) => {
                     state = M::Assign;
                     debug_assert!(head.is_none());
                     head = iter.next().map(|item| item.remap(Label::Assign));
-                    bound_push!(self.buffer2, item);
-                    continue
+                    bound_push!(self.out.1, item);
 
                 }
                 (M::First | M::PipelessFirst, Item::Ident) => {
                     state = M::ExpectArg;
                     debug_assert!(head.is_none());
                     head = Some(item.remap(Label::Ident));
-                    continue;
                 }
                 (M::First | M::PipelessFirst, Item::Func) => {
                     state = M::ExpectArg;
                     debug_assert!(head.is_none());
                     head = Some(item.remap(Label::Func));
-                    continue;
                 }
-                (M::First, _) => {
+                (M::First | M::PipelessFirst, _) => {
                     state = M::Concat;
-                    bound_push!(self.buffer2, item);
+                    bound_push!(self.out.1, item);
                 }
 
+                // 'sexprify()' `.rposition()` ensures we only have one
+                // 'Item::Assign' per 'push_parse()' call
                 (_, Item::Assign) => return Err(item.remap("Unexpected assign")),
-                (_, Item::Pipe) => return Err(item.remap("You can not have double pipes")),
-                (_, Item::PipedStdin) => unreachable!(),
 
-                // Second argument if first was a pipe
-                (M::PipedArg, _) => {
-                    piped_arg = Some(item);
-                    state = M::PipelessFirst;
-                    continue // Do not push because {item} is taken by {piped_arg}
-                }
-
-                // The first without pipes or second/third argument after pipes arg
-                // Like M::First (either the function ident or first arg of concat),
-                // except there should be no pipes
-
-                // Already handled above
-                //(M::PipelessFirst, Item::Ident | Item::Func) if matches!(peek, Some(Item::Assign)) => {
-                //(M::PipelessFirst, Item::Ident | Item::Func) => {
-                (M::PipelessFirst, _) => {
-                    state = M::Concat;
-                    bound_push!(self.buffer2, item);
-                }
 
                 ////////////////////////////////////////////////////////////////
                 // S-expr type determined

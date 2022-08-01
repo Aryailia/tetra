@@ -154,7 +154,7 @@ impl<T> Token<T> {
 // from the correct source code line
 macro_rules! bound_push {
     ($vec:expr, $entry:expr) => {{
-        debug_assert!($vec.len() < $vec.capacity());
+        debug_assert!($vec.len() < $vec.capacity(), "Pushing will grow the array {} -> {}", $vec.len(), $vec.capacity());
         $vec.push($entry);
     }};
 }
