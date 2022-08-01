@@ -58,6 +58,7 @@ pub enum Param {
     Ident,
 }
 
+// 'Item' but trimmed down to just what can be a function label
 #[derive(Clone, Debug)]
 #[cfg_attr(debug_assertions, derive(PartialEq, Eq))]
 pub enum Label {

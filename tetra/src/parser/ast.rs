@@ -18,15 +18,26 @@ pub struct Command {
     pub provides_for: (usize, usize),
 }
 
-pub fn process(sexprs_output: &SexprOutput, _debug_source: &str) -> Result<AstOutput, ParseError> {
-    let (s, resolved_params) = resolve_stdin_and_optimise(sexprs_output);
-    //s
-    //    .iter()
-    //    .enumerate()
-    //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display2(&resolved_params, _debug_source)));
+pub fn process(SexprOutput(sexprs, args): &SexprOutput, _debug_source: &str) -> Result<AstOutput, ParseError> {
+    // Trims the {sexprs}, topologically sorts it, and maps 'Sexpr' to 'Command'
+    let (trimmed_cmds, output_ids, resolved_params) = resolve_stdin_and_optimise(sexprs, args);
+    //trimmed_cmds.iter().enumerate().for_each(|(i, s)| {
+    //    println!(
+    //        "{:<3} {} -> {}",
+    //        i,
+    //        s.to_display(&resolved_params, _debug_source),
+    //        output_ids[i]
+    //    )
+    //});
+    //println!();
 
-    // Trim args and realign the references
-    let ast = trim_and_remap_parameters(sexprs_output.0.len(), s, resolved_params)?;
+    // Trim {args} and realign the references
+    let ast = trim_and_remap_parameters(
+        sexprs.len(),
+        trimmed_cmds,
+        output_ids,
+        resolved_params,
+    )?;
     //ast.0.iter().enumerate().for_each(|(i, t)| {
     //    println!(
     //        "{:?} | {} -> {}",
@@ -39,9 +50,11 @@ pub fn process(sexprs_output: &SexprOutput, _debug_source: &str) -> Result<AstOu
     Ok(ast)
 }
 
+// Best to read these two functions as one
+
 fn resolve_stdin_and_optimise(
-    SexprOutput(sexprs, items): &SexprOutput,
-) -> (Vec<Sexpr>, Vec<Token<Param>>) {
+    sexprs: &[Sexpr], items: &[Token<Item>],
+) -> (Vec<Command>, Vec<usize>, Vec<Token<Param>>) {
     ////////////////////////////////////////////////////////////////////////////
     // Reorder so that the HereDoc headers appear after their bodies
     // i.e. from order
@@ -172,41 +185,52 @@ fn resolve_stdin_and_optimise(
 
     ////////////////////////////////////////////////////////////////////////////
     // Optimisation step
-    let mut trimmed_sexprs = Vec::with_capacity(sexpr_count);
+    // Reuse {sexpr_times_referenced} to track {exp.output_id}
+    let mut trimmed_cmds = Vec::with_capacity(sexpr_count);
+    let mut final_index = 0;
     for i in sorted_sexpr_indices.drain(..) {
         let exp = &sexprs[i];
 
         let start = exp.args.0;
         let close = exp.args.1;
+
+        // Match the above values that the above loop optimised
         if close - start == 1
             && matches!(&exp.head.me, Label::Concat)
             && sexpr_times_referenced[i] == 0
+            && matches!(
+                resolved_params[start].me,
+                Param::Str | Param::Literal(_) | Param::Reference(_)
+            )
         {
-            match resolved_params[start].me {
-                Param::Str | Param::Literal(_) | Param::Reference(_) => {}
-                _ => bound_push!(trimmed_sexprs, exp.clone()),
-            }
+            // Skip
         } else {
-            bound_push!(trimmed_sexprs, exp.clone());
-
-            //bound_push!(trimmed_sexprs, (
-            //        exp.output_id,
-            //        Command {
-            //            label: exp.head.clone(),
-            //            args: exp.args.clone(),
-            //            provides_for: (0, 0),
-            //        }
-            //));
+            sexpr_times_referenced[final_index] = exp.output_id;
+            final_index += 1;
+            bound_push!(
+                trimmed_cmds,
+                Command {
+                    label: exp.head.clone(),
+                    args: (exp.args.0, exp.args.1),
+                    provides_for: (0, 0),
+                }
+            );
         }
     }
+    // For "ast.rs", 'Sexpr' and 'Command' key difference is having {.output_id}
+    // So we store it since the next function needs this data
+    let output_ids = sexpr_times_referenced; // Explicitly re-using this memory
 
     //println!("{:?}", sexpr_times_referenced);
-    (trimmed_sexprs, resolved_params)
+    (trimmed_cmds, output_ids, resolved_params)
 }
 
 fn trim_and_remap_parameters(
+    // NOTE: We could save an argument since `output_ids.len()` is {sexpr_count}
+    //       long, but it is less readable
     sexpr_count: usize,
-    mut trimmed_cmds: Vec<Sexpr>,
+    mut trimmed_cmds: Vec<Command>,
+    output_ids: Vec<usize>,
     resolved_args: Vec<Token<Param>>,
 ) -> Result<AstOutput, ParseError> {
     let item_count = resolved_args.len();
@@ -217,20 +241,16 @@ fn trim_and_remap_parameters(
     // for use in changing 'Param::Reference(<id>)' to 'Param::Reference(<index>)'
     // in the final loop
     let mut output_indices = vec![0; sexpr_count];
-    for (i, exp) in trimmed_cmds.iter().enumerate() {
-        output_indices[exp.output_id] = i;
+    for i in 0..trimmed_cmds.len() {
+        output_indices[output_ids[i]] = i;
     }
 
     // Build final result array
     // {dependencies} is Vec<(usize, usize)> which means data flows from usize1
     // to usize2, i.e. {output[usize2]} uses {output[usize1]} as an argument
-    let mut output = Vec::with_capacity(trimmed_cmds.len());
     let mut gapless_args = Vec::with_capacity(item_count);
     let mut dependencies = Vec::with_capacity(item_count);
-    for (i, exp) in trimmed_cmds.drain(..).enumerate() {
-        // Discriminate label from parameters
-        let label = exp.head;
-
+    for (i, exp) in trimmed_cmds.iter_mut().enumerate() {
         // Build {gapless_args} by removing the gaps in {resolved_args}
         let new_start = gapless_args.len();
         // @TODO: replace this with a drain
@@ -245,14 +265,7 @@ fn trim_and_remap_parameters(
                 _ => bound_push!(gapless_args, a.clone()),
             }
         }
-        bound_push!(
-            output,
-            Command {
-                label,
-                args: (new_start, gapless_args.len()),
-                provides_for: (0, 0),
-            }
-        )
+        exp.args = (new_start, gapless_args.len());
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -278,7 +291,7 @@ fn trim_and_remap_parameters(
             last_provider = *provider;
             cursor = i;
         }
-        output[last_provider].provides_for = (cursor, i + 1);
+        trimmed_cmds[last_provider].provides_for = (cursor, i + 1);
     }
 
     // Some sanity checks in debug mode
@@ -292,13 +305,13 @@ fn trim_and_remap_parameters(
 
         // Ensure these are valid ranges
         // One concern is {last_provider} init to 0 is fine
-        for cmd in &output {
+        for cmd in &trimmed_cmds {
             debug_assert!(cmd.provides_for.0 <= cmd.provides_for.1);
         }
 
         // Ensure {output[].provides_for} is demarcating the right commands
         // (injective check)
-        for (i, cmd) in output.iter().enumerate() {
+        for (i, cmd) in trimmed_cmds.iter().enumerate() {
             let range = &dependencies[cmd.provides_for.0..cmd.provides_for.1];
             for (provider, _receiver) in range {
                 debug_assert_eq!(i, *provider);
@@ -306,7 +319,7 @@ fn trim_and_remap_parameters(
         }
 
         // Make sure all reverse dependencies map somewhere (surjective check)
-        let count = output
+        let count = trimmed_cmds
             .iter()
             .map(|cmd| cmd.provides_for.1 - cmd.provides_for.0)
             .sum();
@@ -316,7 +329,7 @@ fn trim_and_remap_parameters(
     // Remove the left values from {dependencies}
     let providees = dependencies.iter().map(|x| x.1).collect::<Vec<_>>();
 
-    Ok(AstOutput(output, gapless_args, providees))
+    Ok(AstOutput(trimmed_cmds, gapless_args, providees))
 }
 
 impl Command {

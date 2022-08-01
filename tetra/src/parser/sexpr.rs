@@ -46,7 +46,7 @@ pub type ParseError = Token<&'static str>;
 //
 // Notably, we haven't discriminated variable and function identifiers at
 // this stage yet. E.g. "cite len" might `cite(len())` or `cite(len)`
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Sexpr {
     // for resolving to which text cell the 'Item::Stdin' refers
     pub cell_id: usize,
