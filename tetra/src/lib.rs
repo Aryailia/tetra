@@ -347,7 +347,7 @@ mod sexpr_tests {
             22: Concat ""| Reference(21) "",
             23: Concat ""| Str "\n++++\n\n== Lorem\nSome text\n\n",
                            Reference(22) "", Str "\n\n",
-            24: Concat ""|
+            24: Concat ""| Literal("") "\"\"",
             25: Ident "hello"|
             26: Func "if_equals"| Reference(25) "", Reference(24) "", Stdin "{|",
             27: Concat ""| Reference(26) "",

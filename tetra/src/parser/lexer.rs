@@ -38,10 +38,6 @@ pub enum LexType {
     InlineStart,
     InlineClose,
 
-    ArgSeparator,
-    CmdSeparator,
-    Assign,
-
     // Expression-level stuff
     Ident,
     IdentParen,
@@ -50,13 +46,15 @@ pub enum LexType {
     ParenClose,
     Stdin,
 
+    ArgSeparator,
+    CmdSeparator,
+    Assign,
+
     Literal(&'static str),
 
     QuoteStart,
     QuoteClose,
-    Quoted,
-    QuoteEscaped(&'static str),
-    QuoteBlank,
+    QuoteLiteral(&'static str),
     //Finish,
 }
 
@@ -418,10 +416,10 @@ fn lex_code_body(
             // `skip(1)` because we `advance(AHEAD)`. Effectively, we `skip(2)`
             if let Some((ch, _, _)) = walker.advance(AHEAD) {
                 match ch {
-                    'n' => (LexType::QuoteEscaped("\n"), 1, false),
-                    't' => (LexType::QuoteEscaped("\t"), 1, false),
-                    '"' => (LexType::QuoteEscaped("\""), 1, false),
-                    ' ' | '\n' => (LexType::QuoteBlank, 1, false),
+                    'n' => (LexType::QuoteLiteral("\n"), len_utf8!(ch => 1), false),
+                    't' => (LexType::QuoteLiteral("\t"), len_utf8!(ch => 1), false),
+                    '"' => (LexType::QuoteLiteral("\""), len_utf8!(ch => 1), false),
+                    ' ' | '\n' => (LexType::QuoteLiteral(""), len_utf8!(ch => 1), false),
                     _ => {
                         let source = Source::Range(curr, post);
                         let token = Token::new("Missing closing quotation mark", source);
@@ -451,7 +449,7 @@ fn lex_code_body(
 
             // `skip(0)` because we already advanced {walker}
             debug_assert!(walker.ch == '"' || walker.ch == '\\');
-            (LexType::Quoted, 0, false)
+            (LexType::Text, 0, false)
         }
 
         //(CodeMode::Quote, '\"') => {
@@ -581,9 +579,7 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             LexType::Literal(_) => unreachable!(),
 
             LexType::QuoteStart | LexType::QuoteClose => push_check!(buffer '"' if text == "\""),
-            LexType::Quoted => buffer.push_str(text),
-            LexType::QuoteEscaped(_) => buffer.push_str(text),
-            LexType::QuoteBlank => buffer.push_str(text),
+            LexType::QuoteLiteral(_) => buffer.push_str(text),
         }
     }
 

@@ -304,18 +304,29 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
             ////////////////////////////////////////////////////////////////////
             // @TODO: What should happen with quotes in succession without
             //        whitespace separator e.g. `cite "jane"'doe'`
-            (Mode::Quote, LexType::Quoted) => {
+            (Mode::Quote, LexType::Text) => {
                 bound_push!(to_process, l.remap(Item::Str));
             }
-            (Mode::Quote, LexType::QuoteEscaped(s)) => {
+            (Mode::Quote, LexType::QuoteLiteral(s)) => {
                 bound_push!(to_process, l.remap(Item::Literal(s)));
             }
             (Mode::Quote, LexType::QuoteClose) => {
                 mode = Mode::Code;
                 let start = match balance.pop() {
-                    Some((Item::Str, x)) => x,
+                    Some((Item::Str, i)) => i,
                     x => unreachable!("{:?}", x),
                 };
+                // For the case of the empty quote '""', instead of pushing
+                // an empty concat `(concat,)`, push a 'Item::Literal()'
+                if start == to_process.len() {
+                    match l.source {
+                        Source::Range(a, b) => to_process.push(Token::new(
+                            Item::Literal(""), Source::Range(a - len_utf8!('"' => 1), b)
+                        )),
+                    }
+                    // This is because the optimiser step in "ast.rs" only
+                    // copies the literals of 'Label::Concat' with one arg
+                }
                 let out_ref = fsm.sexprify(to_process, cell_id, start, debug_source)?;
                 bound_push!(to_process, out_ref);
             }
