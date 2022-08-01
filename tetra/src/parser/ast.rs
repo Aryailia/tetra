@@ -18,30 +18,84 @@ pub struct Command {
     pub provides_for: (usize, usize),
 }
 
-pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput, ParseError> {
+pub fn process(sexprs_output: &SexprOutput, _debug_source: &str) -> Result<AstOutput, ParseError> {
+    let (s, resolved_params) = resolve_stdin_and_optimise(sexprs_output);
+    //s
+    //    .iter()
+    //    .enumerate()
+    //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display2(&resolved_params, _debug_source)));
+
+    // Trim args and realign the references
+    let ast = trim_and_remap_parameters(sexprs_output.0.len(), s, resolved_params)?;
+    //ast.0.iter().enumerate().for_each(|(i, t)| {
+    //    println!(
+    //        "{:?} | {} -> {}",
+    //        &ast.2[t.provides_for.0..t.provides_for.1],
+    //        t.to_display(&ast.1, _debug_source),
+    //        i
+    //    )
+    //});
+
+    Ok(ast)
+}
+
+fn resolve_stdin_and_optimise(
+    SexprOutput(sexprs, items): &SexprOutput,
+) -> (Vec<Sexpr>, Vec<Token<Param>>) {
     ////////////////////////////////////////////////////////////////////////////
     // Reorder so that the HereDoc headers appear after their bodies
-    let mut sorted_exprs: Vec<Sexpr> = Vec::with_capacity(sexprs.len());
-    let stdin_refs = {
-        let cell_count = sexprs.last().unwrap().cell_id / 2;
-        let mut stdin_refs = Vec::with_capacity(cell_count + 1);
+    // i.e. from order
+    //     head 1 body 2 head 3 body 4
+    // swap to
+    //     body 2 head 1 body 4 head 3
+    // this is topologically sorted order.
+    //
+    // More specifically, we only want to move header commands that use
+    // 'Item::Stdin' since it will be resolved to a 'Param::Reference' and
+    // will be the only ones that reference forward.
+    debug_assert!(!sexprs.is_empty());
+    let sexpr_count = sexprs.len();
 
-        // Move the evens after the odds, we start at 0
-        let mut buffer: Vec<Sexpr> = Vec::with_capacity(sexprs.len());
-        let mut past_id = 0;
-        for exp in sexprs {
-            if past_id + 2 <= exp.cell_id {
-                past_id += 2;
-                bound_push!(stdin_refs, sorted_exprs[sorted_exprs.len() - 1].out);
-                sorted_exprs.append(&mut buffer);
-            }
-            if exp.cell_id % 2 == 0 {
-                bound_push!(buffer, exp.clone());
+    // Topological sort and find the {output_id} for the text cells' concat
+    let mut sorted_sexpr_indices = Vec::with_capacity(sexpr_count);
+    let stdin_refs = {
+        debug_assert_eq!(sexprs[sexpr_count - 1].cell_id % 2, 0);
+        let cell_count = sexprs[sexpr_count - 1].cell_id / 2;
+        let mut buffer = Vec::with_capacity(sexpr_count);
+
+        // + 1 for the 0 pushed at the end
+        let mut stdin_refs = Vec::with_capacity(cell_count + 1);
+        let mut last_body_output_id = 0; // The output_id of the last text cell
+        let mut last_parity = 0;
+
+        for (i, exp) in sexprs.iter().enumerate() {
+            let curr_parity = exp.cell_id % 2;
+            if curr_parity == 1 {
+                last_body_output_id = i;
+                // pushing body commands
+                bound_push!(sorted_sexpr_indices, i);
             } else {
-                bound_push!(sorted_exprs, exp.clone());
+                // On change from odd {exp.cell_id} to even {exp.cell_id}
+                if curr_parity != last_parity {
+                    bound_push!(stdin_refs, last_body_output_id);
+                    // Push all commands that depend on the text body
+                    // into sorted list now that all the body commands have
+                    // been pushed
+                    sorted_sexpr_indices.append(&mut buffer);
+                }
+
+                // Push any entries with 'Item::Stdin' into {buffer}
+                let parameters = &items[exp.args.0..exp.args.1];
+                if parameters.iter().any(|t| matches!(t.me, Item::Stdin)) {
+                    bound_push!(buffer, i);
+                } else {
+                    bound_push!(sorted_sexpr_indices, i);
+                }
             }
+            last_parity = exp.cell_id % 2
         }
-        sorted_exprs.append(&mut buffer); // Add the final knit command
+
+        debug_assert!(buffer.is_empty()); // Make sure all appends went through
 
         // So that 'stdin_refs[x]' for the knit command does not go out of bounds
         bound_push!(stdin_refs, 0);
@@ -49,120 +103,137 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
     };
 
     ////////////////////////////////////////////////////////////////////////////
-    // Resolve 'Item::Stdin' to a 'Item::Reference(_)' and syntax check
-    let mut resolved_args = Vec::with_capacity(arg_defs.len());
-    for exp in &mut sorted_exprs {
-        let output_id = stdin_refs[exp.cell_id / 2];
+    // Resolve 'Item::Stdin' -> 'Param::Reference'
+    // Also trim out:
+    // 1) 'Reference(to Param::basic-type)' to just the 'Param::basic-type'
+    // 2) Double pointers to a direct pointer,
+    //    e.g. '{1} -> {2} -> {3}' to '{1} -> {3}'
 
-        let start = resolved_args.len();
-        let parameters = &arg_defs[exp.args.0..exp.args.1];
-        for (i, arg) in parameters.iter().enumerate() {
-            bound_push!(
-                resolved_args,
-                match arg.me {
-                    Item::Stdin => arg.remap(Param::Reference(output_id)),
-                    Item::Ident if i >= 1 => unreachable!(
-                        "\n{:?}\nThese should all be Item::Reference()\n",
-                        exp.to_debug(arg_defs)
-                    ),
+    // Used to know which pointers are no longer used due to optimisation 2).
+    let mut sexpr_times_referenced = vec![0; sexpr_count];
+    let mut resolved_params = Vec::with_capacity(items.len());
+    for exp in sexprs {
+        for (i, item) in items[exp.args.0..exp.args.1].iter().enumerate() {
+            let param = match item.me {
+                Item::Reference(_) | Item::Stdin => {
+                    let id = match item.me {
+                        Item::Stdin => stdin_refs[exp.cell_id / 2],
+                        Item::Reference(i) => i,
+                        _ => unreachable!(),
+                    };
 
-                    Item::Str => arg.remap(Param::Str),
-                    Item::Literal(s) => arg.remap(Param::Literal(s)),
-                    Item::Ident => arg.remap(Param::Ident),
-                    Item::Reference(id) => arg.remap(Param::Reference(id)),
+                    let target = &sexprs[id];
+                    if matches!(target.head.me, Label::Concat) && target.args.1 - target.args.0 == 1
+                    {
+                        let target_as_item = &items[sexprs[id].args.0];
+                        match target_as_item.me {
+                            Item::Str => target_as_item.remap(Param::Str),
+                            Item::Literal(s) => target_as_item.remap(Param::Literal(s)),
 
-                    // These branches made impossible by sexpr.rs parse step
-                    Item::Func
-                    | Item::Pipe
-                    | Item::PipedStdin
-                    | Item::Assign
-                    | Item::Concat
-                    | Item::Comma
-                    | Item::Paren
-                    | Item::Stmt => unreachable!(),
-                    //_ => arg.clone(),
+                            // Replace double pointers with a direct pointer
+                            Item::Reference(real_id) => {
+                                sexpr_times_referenced[real_id] += 1;
+                                item.remap(Param::Reference(real_id))
+                            }
+                            _ => {
+                                sexpr_times_referenced[id] += 1;
+                                item.remap(Param::Reference(id))
+                            }
+                        }
+                    } else {
+                        sexpr_times_referenced[id] += 1;
+                        item.remap(Param::Reference(id))
+                    }
                 }
-            );
 
-            if i == 1 && matches!(arg.me, Item::Ident) {
-                debug_assert_eq!(parameters[0].me, Item::Assign);
-            }
+                // The rest is just one-to-one mapping from {Item} to {Param}
+                Item::Ident if i >= 1 => unreachable!(
+                    "\n{:?}\nThese should all be Item::Reference()\n",
+                    exp.to_debug(items)
+                ),
+
+                Item::Str => item.remap(Param::Str),
+                Item::Literal(s) => item.remap(Param::Literal(s)),
+                Item::Ident => item.remap(Param::Ident),
+
+                // These branches made impossible by sexpr.rs parse step
+                Item::Func
+                | Item::Pipe
+                | Item::PipedStdin
+                | Item::Assign
+                | Item::Concat
+                | Item::Comma
+                | Item::Paren
+                | Item::Stmt => unreachable!(),
+            };
+            bound_push!(resolved_params, param);
         }
-        exp.args = (start, resolved_args.len());
     }
-    //sorted_exprs.iter().for_each(|s| println!("asdf {:?}", s));
-    //sorted_exprs.iter().for_each(|exp|
-    //    println!(
-    //        "asdf {:?} {:?}",
-    //        exp,
-    //        &resolved_args[exp.args.0 .. exp.args.1],
-    //    ));
 
     ////////////////////////////////////////////////////////////////////////////
-    // Optimisation step, remove any single command
-    // @TODO: change this to not be O(n^2) if possible
-    sorted_exprs.retain(|exp| {
-        let first_index = exp.args.0;
-        let len = exp.args.1 - first_index;
-        if matches!(exp.head.me, Label::Concat) && len == 1 {
-            match resolved_args[first_index].me {
-                // Replace a pointer to a literal with just the literal
-                Param::Str | Param::Literal(_) => {
-                    let (first, rest) = resolved_args[first_index..].split_at_mut(1);
-                    let first_arg = &first[0];
-                    rest.iter_mut().for_each(|arg| {
-                        if let Param::Reference(i) = arg.me {
-                            if i == exp.out {
-                                *arg = first_arg.clone();
-                            }
-                        }
-                    });
-                    // Do not remove if there are no more arguments left
-                    rest.is_empty()
-                }
+    // Optimisation step
+    let mut trimmed_sexprs = Vec::with_capacity(sexpr_count);
+    for i in sorted_sexpr_indices.drain(..) {
+        let exp = &sexprs[i];
 
-                // Replace double pointers with a direct pointer
-                // e.g. `{1} -> {2} -> {3}` replaced with `{1} -> {3}`
-                Param::Reference(old_i) => {
-                    resolved_args[first_index + 1..].iter_mut().for_each(|arg| {
-                        if let Param::Reference(i) = arg.me {
-                            if i == exp.out {
-                                arg.me = Param::Reference(old_i);
-                            }
-                        }
-                    });
-                    false
-                }
-                _ => true,
+        let start = exp.args.0;
+        let close = exp.args.1;
+        if close - start == 1
+            && matches!(&exp.head.me, Label::Concat)
+            && sexpr_times_referenced[i] == 0
+        {
+            match resolved_params[start].me {
+                Param::Str | Param::Literal(_) | Param::Reference(_) => {}
+                _ => bound_push!(trimmed_sexprs, exp.clone()),
             }
         } else {
-            true
-        }
-    });
+            bound_push!(trimmed_sexprs, exp.clone());
 
+            //bound_push!(trimmed_sexprs, (
+            //        exp.output_id,
+            //        Command {
+            //            label: exp.head.clone(),
+            //            args: exp.args.clone(),
+            //            provides_for: (0, 0),
+            //        }
+            //));
+        }
+    }
+
+    //println!("{:?}", sexpr_times_referenced);
+    (trimmed_sexprs, resolved_params)
+}
+
+fn trim_and_remap_parameters(
+    sexpr_count: usize,
+    mut trimmed_cmds: Vec<Sexpr>,
+    resolved_args: Vec<Token<Param>>,
+) -> Result<AstOutput, ParseError> {
+    let item_count = resolved_args.len();
     ////////////////////////////////////////////////////////////////////////////
-    // Parse {resolved_args} and {sorted_exprs} into a Vec<Command> and {resolved_args}
+    // Parse {resolved_args} and {trimmed_cmds} into a Vec<Command> and {resolved_args}
     //
-    // Map ids of the output of each s-expr to their indices in {sorted_exprs}
+    // Map ids of the output of each s-expr to their indices in {trimmed_cmds}
     // for use in changing 'Param::Reference(<id>)' to 'Param::Reference(<index>)'
     // in the final loop
-    let mut output_indices = vec![0; sexprs.len()];
-    for (i, exp) in sorted_exprs.iter().enumerate() {
-        output_indices[exp.out] = i;
+    let mut output_indices = vec![0; sexpr_count];
+    for (i, exp) in trimmed_cmds.iter().enumerate() {
+        output_indices[exp.output_id] = i;
     }
 
     // Build final result array
     // {dependencies} is Vec<(usize, usize)> which means data flows from usize1
     // to usize2, i.e. {output[usize2]} uses {output[usize1]} as an argument
-    let mut output = Vec::with_capacity(sorted_exprs.len());
-    let mut gapless_args = Vec::with_capacity(arg_defs.len());
-    let mut dependencies = Vec::with_capacity(arg_defs.len());
-    for (i, exp) in sorted_exprs.iter().enumerate() {
+    let mut output = Vec::with_capacity(trimmed_cmds.len());
+    let mut gapless_args = Vec::with_capacity(item_count);
+    let mut dependencies = Vec::with_capacity(item_count);
+    for (i, exp) in trimmed_cmds.drain(..).enumerate() {
         // Discriminate label from parameters
-        let label = exp.head.clone();
+        let label = exp.head;
 
         // Build {gapless_args} by removing the gaps in {resolved_args}
         let new_start = gapless_args.len();
+        // @TODO: replace this with a drain
         for a in &resolved_args[exp.args.0..exp.args.1] {
             match a.me {
                 // Change from 'Reference(<id>)' to 'Reference(<index into {output}>)'
@@ -246,7 +317,6 @@ pub fn process(SexprOutput(sexprs, arg_defs): &SexprOutput) -> Result<AstOutput,
     let providees = dependencies.iter().map(|x| x.1).collect::<Vec<_>>();
 
     Ok(AstOutput(output, gapless_args, providees))
-    //Err(Token::new("Finished parsing", Source::Range(0, 0)))
 }
 
 impl Command {

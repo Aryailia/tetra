@@ -153,7 +153,7 @@ impl<'a, K, V> Bindings<'a, K, V> {
     pub fn build(original: &str) -> Result<AstOutput, String> {
         parser::step1_lex(original, true)
             .and_then(|lexemes| parser::step2_to_sexpr(&lexemes, original))
-            .and_then(|sexprs| parser::step3_to_ast(&sexprs))
+            .and_then(|sexprs| parser::step3_to_ast(&sexprs, original))
             .map_err(|token| format!("{} {}", token.get_context(original), token.me))
     }
 

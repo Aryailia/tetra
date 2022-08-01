@@ -22,7 +22,7 @@ use crate::framework::Token;
 
 // The elements of an s-expr. The syntaxemes. For "sexpr.rs"
 // We only want `derive(Eq)` for the test in 'lib.rs'. '--test' runs in debug
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[cfg_attr(debug_assertions, derive(PartialEq, Eq))]
 pub enum Item {
     Str,

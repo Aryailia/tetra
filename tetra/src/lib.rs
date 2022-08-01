@@ -77,7 +77,7 @@ mod tests {
         //    .iter()
         //    .enumerate()
         //    .for_each(|(i, s)| println!("{:<3} {}", i, s.to_display(&sexprs.1, file)));
-        let ast = log(file, parser::step3_to_ast(&sexprs));
+        let ast = log(file, parser::step3_to_ast(&sexprs, file));
         //ast.0.iter().enumerate().for_each(|(i, t)| {
         //    println!(
         //        "{:?} | {} -> {}",
@@ -90,7 +90,7 @@ mod tests {
         let ctx = default_context();
         let out = match ctx.run(
             &ast,
-            Metadata::new(FileType::Markdown, FileType::HTML),
+            Metadata::new(FileType::Markdown, FileType::AsciiDoctor),
             file,
         ) {
             Ok(s) => s,
@@ -132,10 +132,12 @@ mod tests {
 
     pub const GENERAL: &str = r#"
 :title: Hello
-{# Comment #}
-:bibliography: {$ hello = env "HOME"; env "BIBLIOGRAPHY" $}
-{# | test_pipe  #}
+{| ; hello = env "HOME"; concat(":author:       ", hello, .) |}
+:home:         {$ hello $}
+:bibliography: {$ env "BIBLIOGRAPHY" $}
+{# Comment  #}
 
+++++
 {| run "graphviz" | concat . |}
 digraph {
   A -> B
@@ -143,6 +145,7 @@ digraph {
   {$ concat "nodes" $}
 }
 {| end |}
+++++
 
 == Lorem
 Some text
@@ -160,15 +163,6 @@ This should not show up in the output
 {$ cite "@capper2012" $} the
 {$ cite "@margulis2004" $} quick brown
 {$ cite "[@steinfieldEtAl2012]" $} do
-
-++++
-{| run "graphviz" |}
-digraph {
-  A -> B
-  A -> C
-}
-{| end |}
-++++
 
 This is an example of sh
 
@@ -206,8 +200,8 @@ body 1
 "#;
 }
 
-#[cfg(not(test))]
-//#[cfg(test)]
+//#[cfg(not(test))]
+#[cfg(test)]
 mod sexpr_tests {
     #[allow(unused_imports)]
     use super::*;
@@ -250,7 +244,13 @@ mod sexpr_tests {
                 );
 
                 // Check ${arg} is the correct parameter type
-                assert_eq!(Label::$head_ty, s.head.me);
+                assert_eq!(
+                    Label::$head_ty,
+                    s.head.me,
+                    "\nFrom: {} {}\nHead is incorrect type\n",
+                    $id,
+                    $head_val
+                );
 
 
                 // Check number of arguments is correct
@@ -295,6 +295,9 @@ mod sexpr_tests {
                     assert_eq!(
                         Item::$item$(($ref))?,
                         arg.me,
+                        "\nFrom: {} {:?}\nIncorrect type\n",
+                        $id,
+                        Item::$item$(($ref))?,
                     );
                     i += 1;
                 )*
@@ -316,38 +319,48 @@ mod sexpr_tests {
     fn test_general_sexpr() {
         make_sexpr_test!(tests::GENERAL,
             0:  Concat ""| Stdin "",
-            1:  Concat ""| Str "HOME",
-            2:  Ident "env"| Reference(1) "",
-            3:  Assign "="| Ident "hello", Reference(2) "",
-            4:  Concat ""| Str "BIBLIOGRAPHY",
-            5:  Ident "env"| Reference(4) "",
-            6:  Concat ""| Str "\n:title: Hello\n", Str "\n:bibliography: ",
-                Reference(5) "", Str "\n", Str "\n\n",
-            7:  Concat ""| Str "graphviz",
-            8:  Ident "run"| Reference(7) "", Stdin "{|",
-            9:  Ident "concat"| Stdin ".", Reference(8) "",
-            10: Concat ""| Str "nodes",
-            11: Ident "concat"| Reference(10) "",
-            12: Concat ""| Str "\ndigraph {\n  A -> B\n  A -> C\n  ",
-                Reference(11) "", Str "\n}\n",
-            13: Ident "end"| Stdin "{|",
-            14: Concat ""| Str "This is a quote that", Text("\n") "\\n", Str "should be included",
-            15: Concat ""| Reference(14) "",
-            16: Concat ""| Str "\n\n== Lorem\nSome text\n\n", Reference(15) "", Str "\n\n",
-            17: Concat ""|
-            18: Ident "hello"|
-            19: Func "if_equals"| Reference(18) "", Reference(17) "", Stdin "{|",
-            20: Concat ""| Reference(19) "",
-            21: Concat ""| Str "\nCome to the dark side of the moon\n",
-            22: Ident "end"| Stdin "{|",
-            23: Concat ""| Str "a",
-            24: Ident "hello"|
+            1:  Concat ""| Str "\n:title: Hello\n",
+            2:  Concat ""| Stdin "{|",
+            3:  Concat ""| Str "HOME",
+            4:  Ident "env"| Reference(3) "",
+            5:  Assign "="| Ident "hello", Reference(4) "",
+            6:  Concat ""| Str ":author:       ",
+            7:  Ident "hello"|
+            8:  Func "concat"| Reference(6) "", Reference(7) "", Stdin ".",
+            9:  Concat ""| Reference(8) "",
+            10: Ident "hello"|
+            11: Concat ""| Str "BIBLIOGRAPHY",
+            12: Ident "env"| Reference(11) "",
+            13: Concat ""| Str "\n:home:         ", Reference(10) "",
+                           Str "\n:bibliography: ", Reference(12) "", Str "\n",
+                           Str "\n\n++++\n",
+            14: Concat ""| Str "graphviz",
+            15: Ident "run"| Reference(14) "", Stdin "{|",
+            16: Ident "concat"| Stdin ".", Reference(15) "",
+            17: Concat ""| Str "nodes",
+            18: Ident "concat"| Reference(17) "",
+            19: Concat ""| Str "\ndigraph {\n  A -> B\n  A -> C\n  ",
+                           Reference(18) "", Str "\n}\n",
+            20: Ident "end"| Stdin "{|",
+            21: Concat ""| Str "This is a quote that", Literal("\n") "\\n",
+                           Str "should be included",
+            22: Concat ""| Reference(21) "",
+            23: Concat ""| Str "\n++++\n\n== Lorem\nSome text\n\n",
+                           Reference(22) "", Str "\n\n",
+            24: Concat ""|
             25: Ident "hello"|
-            26: Func "concat"| Reference(24) "", Reference(25) "", Reference(23) "",
+            26: Func "if_equals"| Reference(25) "", Reference(24) "", Stdin "{|",
             27: Concat ""| Reference(26) "",
-            28: Concat ""| Str "\n\nThis should not show up in the output\n",
-            29: Concat ""| Reference(0) "", Reference(9) "", Reference(13) "",
-                Reference(20) "", Reference(27) "",
+            28: Concat ""| Str "\nCome to the dark side of the moon\n",
+            29: Ident "end"| Stdin "{|",
+            30: Concat ""| Str "a",
+            31: Ident "hello"|
+            32: Ident "hello"|
+            33: Func "concat"| Reference(31) "", Reference(32) "", Reference(30) "",
+            34: Concat ""| Reference(33) "",
+            35: Concat ""| Str "\n\nThis should not show up in the output\n",
+            36: Concat ""| Reference(0) "", Reference(9) "", Reference(16) "",
+                           Reference(20) "", Reference(27) "", Reference(34) "",
         );
     }
 
@@ -365,20 +378,14 @@ mod sexpr_tests {
             7:  Concat ""| Str "\n",
                 Reference(2) "", Str " the\n",
                 Reference(4) "", Str " quick brown\n",
-                Reference(6) "", Str " do\n\n++++\n",
-            8:  Concat ""| Str "graphviz",
+                Reference(6) "", Str " do\n\nThis is an example of sh\n\n",
+            8:  Concat ""| Str "sh",
             9:  Ident "run"| Reference(8) "", Stdin "{|",
-            10: Concat ""| Str "\ndigraph {\n  A -> B\n  A -> C\n}\n",
+            10: Concat ""| Str "\necho yo\n",
             11: Ident "end"| Stdin "{|",
-            12: Concat ""| Str "\n++++\n\nThis is an example of sh\n\n",
-            13: Concat ""| Str "sh",
-            14: Ident "run"| Reference(13) "", Stdin "{|",
-            15: Concat ""| Str "\necho yo\n",
-            16: Ident "end"| Stdin "{|",
-            17: Ident "references"|
-            18: Concat ""| Str "\n\n\n== References\n\n", Reference(17) "", Str "\n\nstuff",
-            19: Concat ""| Reference(0) "", Reference(9) "", Reference(11) "",
-                Reference(14) "", Reference(16) "",
+            12: Ident "references"|
+            13: Concat ""| Str "\n\n\n== References\n\n", Reference(12) "", Str "\n\nstuff",
+            14: Concat ""| Reference(0) "", Reference(9) "", Reference(11) "",
         );
     }
 
@@ -388,9 +395,9 @@ mod sexpr_tests {
         make_sexpr_test!(tests::LITERAL,
             0: Concat ""| Stdin "",
             1: Concat ""| Str "\nbody 1\n",
-               Text("{|") "{{|", Str " not block ",   Text("|}") "|}}", Str "\n",
-               Text("{$") "{{$", Str " not inline ",  Text("$}") "$}}", Str "\n",
-               Text("{#") "{{#", Str " not comment ", Text("#}") "#}}",
+               Literal("{|") "{{|", Str " not block ",   Literal("|}") "|}}", Str "\n",
+               Literal("{$") "{{$", Str " not inline ",  Literal("$}") "$}}", Str "\n",
+               Literal("{#") "{{#", Str " not comment ", Literal("#}") "#}}",
                Str "\nBody 2",
             2: Concat ""| Reference(0) "",
         );

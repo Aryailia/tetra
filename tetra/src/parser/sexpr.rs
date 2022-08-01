@@ -28,7 +28,7 @@
 
 use std::fmt::Write as _; // clippy: import without risk of name clashing
 
-use super::{lexer::LexType, Item, Label};
+use super::{lexer::LexType, Item, Label, Param};
 use crate::framework::{Source, Token};
 
 pub struct SexprOutput(pub Vec<Sexpr>, pub Vec<Token<Item>>);
@@ -58,7 +58,7 @@ pub struct Sexpr {
     // But it is useful for reading the meaining the output of 'process()',
     // {SexprOutput}. It tells you what each {Item::Reference(x)} refers to,
     // i.e. the one that matches {x} to {Sexpr.out}.
-    pub out: usize,
+    pub output_id: usize,
 }
 
 impl Sexpr {
@@ -70,7 +70,18 @@ impl Sexpr {
             item.push_display(&mut buffer, original);
             buffer.push_str(", ");
         }
-        write!(buffer, ") -> {};", self.out).unwrap();
+        write!(buffer, ") -> {};", self.output_id).unwrap();
+        buffer
+    }
+    pub fn to_display2(&self, args: &[Token<Param>], original: &str) -> String {
+        let mut buffer = format!("({}): (", self.cell_id);
+        self.head.push_display(&mut buffer, original);
+        buffer.push_str(" <> ");
+        for item in &args[self.args.0..self.args.1] {
+            item.push_display(&mut buffer, original);
+            buffer.push_str(", ");
+        }
+        write!(buffer, ") -> {};", self.output_id).unwrap();
         buffer
     }
 
@@ -314,16 +325,6 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
                 return Err(l.remap("sexpr.rs: Unhandled case"));
             }
         }
-
-        // In accordance to the notes in the definition of 'Item'
-        debug_assert!(!to_process
-            .iter()
-            .any(|t| matches!(t.me, Item::Paren | Item::Stmt)));
-        debug_assert!(!fsm
-            .out
-            .1
-            .iter()
-            .any(|t| matches!(t.me, Item::Comma | Item::Paren | Item::Stmt)));
     }
     // End the final heredoc body
     let _out_ref = fsm.sexprify(to_process, cell_id, 0, debug_source)?;
@@ -408,7 +409,7 @@ impl Fsm {
                 self.parse_push(to_process.drain(start + post_infix..), cell_id)?;
 
             //// This is how we debug stuff
-            //println!("{}", sexpr.to_display(args, _debug_source));
+            //println!("{}", sexpr.to_display(&self.out.1, _debug_source));
             //sexpr.print_debug(&self.out.1);
 
             self.out.0.push(sexpr);
@@ -615,7 +616,7 @@ impl Fsm {
             cell_id,
             head,
             args: (self.args_cursor, self.out.1.len()),
-            out: output_id,
+            output_id,
         };
         self.args_cursor = self.out.1.len(); // Set before pushing infix operator
 
