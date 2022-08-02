@@ -201,6 +201,7 @@ impl Command {
                 Param::Literal(s) => Value::Text(Cow::Borrowed(s)),
                 Param::Ident => Value::Null, // First arg of assign is the only place
                 Param::Reference(_) => Value::Null,
+                Param::Key => todo!("Not sure how to deal with optional arguments yet."),
                 //Param::Reference
             });
         }

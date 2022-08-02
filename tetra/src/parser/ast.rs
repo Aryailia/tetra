@@ -168,6 +168,7 @@ fn resolve_stdin_and_optimise(
                 Item::Str => item.remap(Param::Str),
                 Item::Literal(s) => item.remap(Param::Literal(s)),
                 Item::Ident => item.remap(Param::Ident),
+                Item::Key => todo!("Optional arguments are WIP"),
 
                 // These branches made impossible by sexpr.rs parse step
                 Item::Func
@@ -175,6 +176,7 @@ fn resolve_stdin_and_optimise(
                 | Item::PipedStdin
                 | Item::Assign
                 | Item::Concat
+                | Item::Colon
                 | Item::Comma
                 | Item::Paren
                 | Item::Stmt => unreachable!(),

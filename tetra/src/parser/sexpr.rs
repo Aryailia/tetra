@@ -53,6 +53,7 @@ pub struct Sexpr {
     pub head: Token<Label>,
     // Index into {SexprOutput.1}
     pub args: (usize, usize),
+    pub opts: (usize, usize),
 
     // This gets overwritten after this stage in ast.rs
     // But it is useful for reading the meaining the output of 'process()',
@@ -93,7 +94,7 @@ impl Sexpr {
 struct Fsm {
     args_cursor: usize,
     out: SexprOutput,
-    buffer2: Vec<Token<Item>>, // the buffer for {to_process}
+    opt_arg_buffer: Vec<Token<Item>>,
 }
 
 /******************************************************************************
@@ -168,7 +169,7 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
             Vec::with_capacity(lexemes.len() + 2),
             Vec::with_capacity(lexemes.len() + 2),
         ),
-        buffer2: Vec::with_capacity(to_process.capacity()),
+        opt_arg_buffer: Vec::with_capacity(to_process.capacity()),
     };
     let mut mode = Mode::Text;
     let mut balance = Vec::new();
@@ -287,19 +288,22 @@ pub fn process(lexemes: &[Token<LexType>], debug_source: &str) -> Result<SexprOu
                 mode = Mode::Quote;
                 balance.push((Item::Str, to_process.len()));
             }
-            // TODO: Rename to CmdSeparator StmtSeparator
-            (Mode::Code, LexType::CmdSeparator) => {
-                // "display ''; cite" means we ignore the output of the first command
-                let _out_ref = fsm.sexprify(to_process, cell_id, stmt_cursor, debug_source)?;
-                stmt_cursor = to_process.len();
-            }
 
-            (Mode::Code, LexType::Assign) => {
-                bound_push!(to_process, l.remap(Item::Assign));
+            (Mode::Code, LexType::KeyValSeparator) => {
+                bound_push!(to_process, l.remap(Item::Colon));
             }
             (Mode::Code, LexType::ArgSeparator) => {
                 bound_push!(to_process, l.remap(Item::Comma));
             }
+            (Mode::Code, LexType::StmtSeparator) => {
+                // "display ''; cite" means we ignore the output of the first command
+                let _out_ref = fsm.sexprify(to_process, cell_id, stmt_cursor, debug_source)?;
+                stmt_cursor = to_process.len();
+            }
+            (Mode::Code, LexType::Assign) => {
+                bound_push!(to_process, l.remap(Item::Assign));
+            }
+
             //(Mode::Code, _) => return Err(Token::new("Sexpr.rs: Unhandled token", source)),
             ////(Mode::Code, _) => debug_print_token!(die@l, debug_source),
 
@@ -479,6 +483,7 @@ impl Fsm {
             // Handling the other arguments for a fucntion call
             ExpectArg,
             ExpectComma,
+            ExpectVal,
         }
         let mut piped_arg: Option<Token<Item>> = None;
         let mut state = M::First;
@@ -526,7 +531,7 @@ impl Fsm {
                 (M::First | M::PipelessFirst, Item::Ident | Item::Func) if matches!(peek, Some(Item::Assign)) => {
                     state = M::Assign;
                     debug_assert!(head.is_none());
-                    head = iter.next().map(|item| item.remap(Label::Assign));
+                    head = iter.next().map(|t| t.remap(Label::Assign));
                     bound_push!(self.out.1, item);
 
                 }
@@ -555,8 +560,8 @@ impl Fsm {
 
                 // Above should catch all the non-argument entries
                 (M::Concat | M::Assign, Item::Comma) => return Err(item.remap("Unexpected comma. There is no function call for this list of arguments.")),
-                (M::Concat, _) => bound_push!(self.buffer2, item),
-                (M::Assign, _) => bound_push!(self.buffer2, item),
+                (M::Concat, _) => bound_push!(self.out.1, item),
+                (M::Assign, _) => bound_push!(self.out.1, item),
 
 
 
@@ -564,72 +569,90 @@ impl Fsm {
 
                 ////////////////////////////////////////////////////////////////
                 // Function
-
-                (M::ExpectArg, Item::Comma) => return Err(item.remap("No value provided")),
-                (M::ExpectArg, _) if matches!(peek, Some(Item::Ident | Item::Func)) => {
+                (M::ExpectArg | M::ExpectVal, Item::Comma) => return Err(item.remap("No value provided")),
+                (M::ExpectArg | M::ExpectVal, _) if matches!(peek, Some(Item::Ident | Item::Func)) => {
                     return Err(item.remap("Expected comma. If this is part of a function call, you need a paren to disambiguate this."));
                 }
-                (M::ExpectArg, Item::Ident) => {
+                (M::ExpectArg, Item::Ident) if matches!(peek, Some(Item::Colon)) => {
+                    bound_push!(self.opt_arg_buffer, item.remap(Item::Key));
+                    iter.next(); // Skip colon
+                    state = M::ExpectVal;
+                }
+                (M::ExpectArg | M::ExpectVal, Item::Ident) => {
                     // Single argument idents must be pushed as their own
                     // s-expr since we cannot determine if they are variables
                     // or function calls
                     //bound_push!(self.out.1, item);
 
-                    let source = item.source.clone();
                     let label = item.remap(Label::Ident);
-                    let (sexpr, out_item) = self.form_sexpr_and_update_cursor(label, cell_id);
-                    self.buffer2.push(Token::new(out_item, source));
-                    bound_push!(self.out.0, sexpr);
+
+                    let output_id = self.out.0.len();
+                    let out_ref = item.remap(Item::Reference(output_id));
+                    bound_push!(self.out.0, Sexpr {
+                        cell_id,
+                        head: label,
+                        args: (self.args_cursor, self.args_cursor),
+                        opts: (self.args_cursor, self.args_cursor),
+                        output_id,
+                    });
+
+                    match &state {
+                        M::ExpectArg => bound_push!(self.out.1, out_ref),
+                        M::ExpectVal => bound_push!(self.opt_arg_buffer, out_ref),
+                        _ => unreachable!(),
+                    }
 
                     state = M::ExpectComma;
-                    continue
                 }
+
+
+                (_, Item::Colon) => return Err(item.remap("Unexpected colon")),
+
                 (M::ExpectArg, _) => {
                     state = M::ExpectComma;
-                    bound_push!(self.buffer2, item);
+                    bound_push!(self.out.1, item);
+                }
+                (M::ExpectVal, _) => {
+                    state = M::ExpectComma;
+                    bound_push!(self.opt_arg_buffer, item);
                 }
 
-                (M::ExpectComma, Item::Comma) => {
-                    state = M::ExpectArg;
-                    continue // Do not push
-                }
+                (M::ExpectComma, Item::Comma) => state = M::ExpectArg,
                 (M::ExpectComma, _) => return Err(item.remap("Expect a comma before here.")),
-
             }
         }
         if let Some(a) = piped_arg {
-            bound_push!(self.buffer2, a);
+            bound_push!(self.out.1, a);
         }
 
-        // In accordance to the notes in the definition of 'Item'
-        debug_assert!(!self
-            .buffer2
-            .iter()
-            .any(|t| matches!(t.me, Item::Concat | Item::Comma | Item::Paren | Item::Stmt)));
-        self.out.1.append(&mut self.buffer2);
+
+        let args_close = self.out.1.len();
+        self.out.1.append(&mut self.opt_arg_buffer);
+        let opts_close = self.out.1.len();
+        let args_close = opts_close; // @TODO: delete this for optional arguments
 
         // @TODO: make this the span of the 'Sexpr'
         let source = Source::Range(0, 0);
         let default = Token::new(Label::Concat, source.clone());
-        let (sexpr, out_item) = self.form_sexpr_and_update_cursor(head.unwrap_or(default), cell_id);
-        Ok((sexpr, Token::new(out_item, source)))
-    }
 
-    fn form_sexpr_and_update_cursor(
-        &mut self,
-        head: Token<Label>,
-        cell_id: usize,
-    ) -> (Sexpr, Item) {
         let output_id = self.out.0.len();
+        let out_ref = Token::new(Item::Reference(output_id), source);
         let sexpr = Sexpr {
             cell_id,
-            head,
-            args: (self.args_cursor, self.out.1.len()),
+            head: head.unwrap_or(default),
+            args: (self.args_cursor, args_close),
+            opts: (args_close, opts_close),
             output_id,
         };
-        self.args_cursor = self.out.1.len(); // Set before pushing infix operator
+        self.args_cursor = opts_close;
 
-        (sexpr, Item::Reference(output_id))
+        // In accordance to the notes in the definition of 'Item'
+        debug_assert!(!self
+            .out.1
+            .iter()
+            .any(|t| matches!(t.me, Item::Concat | Item::Comma | Item::Paren | Item::Stmt)));
+
+        Ok((sexpr, out_ref))
     }
 }
 

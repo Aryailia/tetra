@@ -46,8 +46,9 @@ pub enum LexType {
     ParenClose,
     Stdin,
 
+    KeyValSeparator,
     ArgSeparator,
-    CmdSeparator,
+    StmtSeparator,
     Assign,
 
     Literal(&'static str),
@@ -399,8 +400,9 @@ fn lex_code_body(
         (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
         (CodeMode::Regular, ')') => (LexType::ParenClose, len_utf8!('|' => 1), false),
         (CodeMode::Regular, '.') => (LexType::Stdin, len_utf8!('.' => 1), false),
+        (CodeMode::Regular, ':') => (LexType::KeyValSeparator, len_utf8!(':' => 1), false),
         (CodeMode::Regular, ',') => (LexType::ArgSeparator, len_utf8!(',' => 1), false),
-        (CodeMode::Regular, ';') => (LexType::CmdSeparator, len_utf8!(';' => 1), false),
+        (CodeMode::Regular, ';') => (LexType::StmtSeparator, len_utf8!(';' => 1), false),
         (CodeMode::Regular, '=') => (LexType::Assign, len_utf8!('=' => 1), false),
         (CodeMode::Regular, '"') => {
             fsm.mode = CodeMode::Quote;
@@ -549,10 +551,6 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
                 buffer.push_str(config.inline.1);
             }
 
-            LexType::ArgSeparator => push_check!(buffer ',' if text == ","),
-            LexType::CmdSeparator => push_check!(buffer ';' if text == ";"),
-            LexType::Assign => push_check!(buffer '=' if text == "="),
-
             LexType::Ident => {
                 assert!(text.find(is_invalid_second_ident_char).is_none());
                 buffer.push_str(text);
@@ -569,6 +567,11 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             LexType::ParenStart => push_check!(buffer '(' if text == "("),
             LexType::ParenClose => push_check!(buffer ')' if text == ")"),
             LexType::Stdin => push_check!(buffer '.' if text == "."),
+
+            LexType::KeyValSeparator => push_check!(buffer ':' if text == ":"),
+            LexType::ArgSeparator => push_check!(buffer ',' if text == ","),
+            LexType::StmtSeparator => push_check!(buffer ';' if text == ";"),
+            LexType::Assign => push_check!(buffer '=' if text == "="),
 
             LexType::Literal("{|") => buffer.push_str("{{|"),
             LexType::Literal("|}") => buffer.push_str("|}}"),

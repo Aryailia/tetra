@@ -30,6 +30,7 @@ pub enum Item {
     Reference(usize), // Id that should match {Sexpr.out}. Index into {SexprOutput.0}
     Ident,            // Variable or function
     Func,             // Item::Ident that was narrowed down to only a function
+    Key,              // For optional arguments, i.e. the key of key-value pairs
 
     Stdin,      // Referes to the associated heredoc body
     Pipe,       //
@@ -40,6 +41,7 @@ pub enum Item {
     Concat,
 
     // The following are just for parsing, but are not included in args {SexprOutput.1}
+    Colon,
     Comma,
 
     // The following should never be pushed into {to_process}.
@@ -56,6 +58,7 @@ pub enum Param {
     Literal(&'static str),
     Reference(usize),
     Ident,
+    Key,
 }
 
 // 'Item' but trimmed down to just what can be a function label
@@ -77,6 +80,10 @@ impl Token<Item> {
             Item::Assign => buffer.push('='),
             // This is either a variable or function identifier
             Item::Ident => buffer.push_str(self.to_str(source)),
+            Item::Key => {
+                buffer.push_str(self.to_str(source));
+                buffer.push(':');
+            }
             Item::Func => {
                 buffer.push_str(self.to_str(source));
                 buffer.push('(');
@@ -90,7 +97,7 @@ impl Token<Item> {
             Item::PipedStdin => buffer.push_str(". | "),
 
             //Item::Comma => buffer.push_str("\\,"),
-            Item::Comma => unreachable!(),
+            Item::Colon | Item::Comma => unreachable!(),
             Item::Paren | Item::Stmt => unreachable!(),
         }
     }
@@ -107,7 +114,7 @@ impl Token<Param> {
         match self.me {
             Param::Str => write!(buffer, "{:?}", self.to_str(source)).unwrap(),
             Param::Literal(s) => write!(buffer, "{:?}", s).unwrap(),
-            Param::Ident => buffer.push_str(self.to_str(source)),
+            Param::Ident| Param::Key => buffer.push_str(self.to_str(source)),
             Param::Reference(i) => write!(buffer, "{{{}}}", i).unwrap(),
         }
     }
