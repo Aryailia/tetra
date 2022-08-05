@@ -1,23 +1,44 @@
 //run: cargo test -- --nocapture
 
-use std::mem::take;
+use std::mem::replace;
 
 use crate::framework::{Source, Token};
+use common::Walker;
 
 type ParseError = Token<&'static str>;
-type PullParseOutput = Result<Option<Lexeme>, ParseError>;
+type PullResult<T> = Result<T, ParseError>;
 type Lexeme = Token<LexType>;
 
+struct Config<'a> {
+    heredoc: (&'static str, &'static str),
+    inline: (&'static str, &'static str),
+    comment: (&'static str, &'static str),
+    literals: &'a [(&'static str, &'static str)],
+}
 // {_config} is a placeholder for when we pass a struct that configures
 // details such as "{$ $}" should be the syntax for inline code cells
-pub fn process(original: &str, _config: bool) -> Result<Vec<Lexeme>, ParseError> {
+pub fn process(original: &str, _config: bool) -> PullResult<Vec<Lexeme>> {
     // We add plus one for the empty string case  "" which is one lexeme long
     let mut lexemes = Vec::with_capacity(original.len() + 1);
 
     let mut fsm = CellFsm::new();
-    let mut walker = Walker::new(original);
+    let mut walker = Walker::new('\n', original); // Don't use init = '\n'
 
-    while let Some(token1) = parse(&mut fsm, &mut walker)? {
+    let config = Config {
+        heredoc: ("{|", "|}"),
+        inline: ("{$", "$}"),
+        comment: ("{#", "#}"),
+        literals: &[
+            ("{{|", "{|"),
+            ("|}}", "|}"),
+            ("{{$", "{$"),
+            ("$}}", "$}"),
+            ("{{#", "{#"),
+            ("#}}", "#}"),
+        ],
+    };
+
+    while let Some(token1) = parse(&mut fsm, &mut walker, &config)? {
         bound_push!(lexemes, token1);
     }
     //lexemes.iter().for_each(|l| println!("{:?} {:?}", l, l.to_str(original)));
@@ -61,123 +82,31 @@ pub enum LexType {
 
 #[derive(Debug)]
 enum CellMode {
-    // Placeholder for Mode
-    Transition,
-    Text,    // Text block, map as-is to output
-    HereDoc, // sh jargon, i.e. cell block that accepts a text block as STDIN
-    Inline,  // Counterpart to 'heredoc', a regular cell block
-    Comment, // Comment block
-    Finish,  // Zero-span syntax, just indicates parsing is complete
+    // 'CellMode::Transition' queues a second push
+    Transition(Option<Lexeme>), // Queueing 'None' ends the loop in 'process()'
+    Text,        // Text block, map as-is to output
+    HereDoc,     // sh jargon, i.e. cell block that accepts a text block as STDIN
+    Inline,      // Counterpart to 'heredoc', a regular cell block
+    Comment,     // Comment block
 }
+
+
 struct CellFsm {
     mode: CellMode,
-    transition_to: Option<(CellMode, Token<LexType>)>,
+    transition_to: CellMode,
 
-    heredoc: (&'static str, &'static str),
-    inline: (&'static str, &'static str),
-    comment: (&'static str, &'static str),
-
-    code_fsm: CodeFsm,
+    code_mode: CodeMode,
 }
 
 impl CellFsm {
-    fn new(/*config: Config*/) -> Self {
+    fn new() -> Self {
         Self {
             mode: CellMode::Text,
-            transition_to: None,
+            transition_to: CellMode::Text, // Default does not matter
 
-            // The numbers are the char count
-            heredoc: ("{|", "|}"),
-            inline: ("{$", "$}"),
-            comment: ("{#", "#}"),
-
-            code_fsm: CodeFsm::new(),
+            code_mode: CodeMode::Regular,
         }
     }
-}
-
-// This essentially duplicates the behaviour of `char_indices()` but stores
-// the value of the current iteration in an accessible location
-struct Walker<'a> {
-    original: &'a str,
-    // This does not have to be peekable as we store {ch} in memory and progress
-    // the "Walker" struct on-demand in `parse()`
-    iter: std::str::Chars<'a>,
-    ch: char,
-    curr: usize,
-    post: usize,
-}
-
-type WalkerStep<'a> = (char, usize, usize);
-const STILL: bool = true;
-const AHEAD: bool = false;
-
-impl<'a> Walker<'a> {
-    fn init_chars_iter(s: &str) -> (std::str::Chars, char, usize) {
-        let mut iter = s.chars();
-        let (ch, post) = iter.next().map(|c| (c, c.len_utf8())).unwrap_or((' ', 0)); // None init to anything
-        (iter, ch, post)
-    }
-
-    fn new(original: &'a str) -> Self {
-        // calls next on `original.chars()`
-        let (iter, ch, post) = Self::init_chars_iter(original);
-        Self {
-            original,
-            iter,
-            ch,
-            curr: 0, // Value should be same as `is_end()` of empty string
-            post,
-        }
-    }
-
-    // {is_fake_advance} is {STILL} or {AHEAD} to facilitate doing a do-while
-    // loop, i.e. {STILL} on the 'do' iteration, {AHEAD} on all other iterations
-    fn advance(&mut self, is_fake_advance: bool) -> Option<WalkerStep> {
-        // This branch is mostly is to allow for do-while constructs
-        if is_fake_advance == STILL {
-            Some((self.ch, self.curr, self.post))
-        } else if let Some(ch) = self.iter.next() {
-            self.ch = ch;
-            self.curr = self.post;
-            self.post += ch.len_utf8();
-            Some((ch, self.curr, self.post))
-        } else {
-            self.curr = self.original.len();
-            None
-        }
-        //self.post = curr + ch.len_utf8();
-    }
-
-    // @TODO: eliminate boundary check of chars().next()
-    fn skip(&mut self, amount: usize) {
-        // Fast path
-        let substr = &self.original[self.curr + amount..];
-        let len_utf8;
-        (self.iter, self.ch, len_utf8) = Self::init_chars_iter(substr);
-        self.curr += amount;
-        self.post = self.curr + len_utf8;
-
-        //println!("skip {:?}", &self.original[self.post + amount..]);
-    }
-
-    fn advance_until<P: Fn(char) -> bool>(&mut self, predicate: P) {
-        //println!("{:?}", &self.original[self.curr..]);
-        let amount = self.original[self.curr..].find(predicate).unwrap_or(0);
-        self.skip(amount);
-    }
-
-    #[inline]
-    fn is_end(&self) -> bool {
-        self.curr == self.original.len()
-    }
-}
-
-#[test]
-fn walk_empty_string() {
-    // `is_end()` of empty string should evaluate to 0
-    let walker = Walker::new("");
-    debug_assert!(walker.is_end());
 }
 
 // General design principle is that inner loops should be smallest to optimise
@@ -188,90 +117,99 @@ fn walk_empty_string() {
 //
 // Because we advance the walker iter once (in `Walker::new()`) before parsing,
 // we want do-while loops. We want to move
-fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
+fn parse(fsm: &mut CellFsm, walker: &mut Walker, cfg: &Config) -> PullResult<Option<Lexeme>> {
     // Each call to `parse()` only outputs one Lexeme, hence we need a
     // 'CellMode::Transition' for when there are two lexemes to output to
     // stagger them
-    match fsm.mode {
+    match &mut fsm.mode {
         CellMode::Text => {
-            let start = walker.curr;
-            let mut do_while = STILL;
+            // {walker.post} is the only thing that is safe since we might have
+            // ended from a different match branch with 'increment_post_by()'.
+            let start = walker.post;
+            let mut post = walker.post;
 
-            while let Some((_, curr, _)) = walker.advance(do_while) {
-                let current_str = &walker.original[curr..];
-                let literals = [
-                    ("{{|", "{|", 3),
-                    ("|}}", "|}", 3),
-                    ("{{$", "{$", 3),
-                    ("$}}", "$}", 3),
-                    ("{{#", "{#", 3),
-                    ("#}}", "#}", 3),
-                ];
-                let (found, next_mode, transition, advance_amount) =
-                    // @TODO: literals add this to configuration
-                    if let Some((from, into, len)) = literals.iter().find(|x| current_str.starts_with(x.0)) {
-                        debug_assert_eq!(from.len(), *len);
-                        let s = Source::Range(curr, curr + *len);
-                        let t = Token::new(LexType::Literal(into), s);
+            loop {
+                let current_str = &walker.original[walker.post..];
 
-                        // Back to 'CellMode::Text', just using transition to
-                        // push 'LexType::Literal'
-                        let trans = Some((CellMode::Text, t));
-                        (true, CellMode::Transition, trans, *len)
+                let (found, next_mode, transition, skip_amt) =
+                    if let Some((from, into)) = cfg.literals.iter().find(|x| current_str.starts_with(x.0)) {
+                        let s = Source::Range(post, post + from.len());
+                        let t = Some(Token::new(LexType::Literal(into), s));
+                        (true, CellMode::Transition(t), CellMode::Text, from.len())
 
-                    } else if current_str.starts_with(fsm.heredoc.0) {
-                        let s = Source::Range(curr, curr + fsm.heredoc.0.len());
-                        let t = Token::new(LexType::HereDocStart, s);
-                        let trans = Some((CellMode::HereDoc, t));
-                        (true, CellMode::Transition, trans, fsm.heredoc.0.len())
-                    } else if current_str.starts_with(fsm.inline.0) {
-                        let s = Source::Range(curr, curr + fsm.inline.0.len());
-                        let t = Token::new(LexType::InlineStart, s);
-                        let trans = Some((CellMode::Inline, t));
-                        (true, CellMode::Transition, trans, fsm.inline.0.len())
-                    } else if current_str.starts_with(fsm.comment.0) {
-                        (true, CellMode::Comment, None, fsm.comment.0.len())
+                    } else if current_str.starts_with(cfg.heredoc.0) {
+                        let s = Source::Range(post, post + cfg.heredoc.0.len());
+                        let t = Some(Token::new(LexType::HereDocStart, s));
+                        (true, CellMode::Transition(t), CellMode::HereDoc, cfg.heredoc.0.len())
+
+                    } else if current_str.starts_with(cfg.inline.0) {
+                        let s = Source::Range(post, post + cfg.inline.0.len());
+                        let t = Some(Token::new(LexType::InlineStart, s));
+                        (true, CellMode::Transition(t), CellMode::Inline, cfg.inline.0.len())
+
+                    } else if current_str.starts_with(cfg.comment.0) {
+                        (true, CellMode::Comment, CellMode::Comment, cfg.comment.0.len())
                     } else {
-                        (false, CellMode::Text, None, 0)
+                        (false, CellMode::Text, CellMode::Text, 0)
                     };
 
-                // If a non-'LexType::Text' lexeme found, push everything till
-                // now as a Text and setup to push
+                // These happen for all if-branches except the found-nothing branch
                 if found {
-                    walker.skip(advance_amount);
                     fsm.mode = next_mode;
                     fsm.transition_to = transition;
-                    let text = Token::new(LexType::Text, Source::Range(start, curr));
+
+                    // {post} assigned before any calls to 'walker.increment_post_by()'
+                    let text = Token::new(LexType::Text, Source::Range(start, post));
+                    walker.increment_post_by(skip_amt); // After/before {text} does not matter
                     return Ok(Some(text));
                 }
-                do_while = AHEAD;
-            }
-            if walker.is_end() {
-                fsm.mode = CellMode::Finish;
+
+                if let Some((_, _, p)) = walker.advance() {
+                    post = p;
+                } else {
+                    break;
+                }
             }
             // Last token till the end of the file is a 'Text' lexeme.
-            let text = Token::new(LexType::Text, Source::Range(start, walker.curr));
+            let text = Token::new(LexType::Text, Source::Range(start, post));
+            fsm.mode = CellMode::Transition(None); // Finish 'process()'
             Ok(Some(text))
         }
 
-        CellMode::Transition => {
-            let token;
-            (fsm.mode, token) = take(&mut fsm.transition_to).unwrap();
-            Ok(Some(token))
+        // Way to queue a second push
+        // A pull reaching the end of block, means the current block is pulled
+        // But we also know that the block ender should be pushed as well, e.g.
+        //     'hello {|'
+        // means that
+        //     LexType::Text 'hello '
+        //     LexType::HereDocStart '{|'
+        // should be pushed. But pull parser means we just pull one token at
+        // a time, so we need to queue a second one.
+        CellMode::Transition(t) => {
+            let token = replace(t, None);
+            // Does not matter what we replace it with
+            fsm.mode = replace(&mut fsm.transition_to, CellMode::Text);
+            Ok(token)
         }
 
         CellMode::Comment => {
-            let start = walker.curr;
-            let mut do_while = STILL;
+            let start = walker.post; // Just after the "{#"
 
-            while let Some((_, curr, _)) = walker.advance(do_while) {
-                if walker.original[curr..].starts_with(fsm.comment.1) {
-                    walker.skip(fsm.comment.1.len());
+            //let (mut curr, mut ch) = (start, fsm.comment.1.chars().next().unwrap());
+            let mut post = start;
+            loop {
+                if walker.original[post..].starts_with(cfg.comment.1) {
+                    walker.increment_post_by(cfg.comment.1.len());
                     fsm.mode = CellMode::Text;
-                    let text = Token::new(LexType::BlockComment, Source::Range(start, curr));
+                    let text = Token::new(LexType::BlockComment, Source::Range(start, post));
                     return Ok(Some(text));
                 }
-                do_while = AHEAD;
+                if let Some((_, _, p)) = walker.advance() {
+                    post = p;
+                } else {
+                    break;
+                }
+
             }
 
             let source = Source::Range(start, walker.post);
@@ -280,75 +218,39 @@ fn parse(fsm: &mut CellFsm, walker: &mut Walker) -> PullParseOutput {
 
         CellMode::HereDoc => {
             let (t, is_done) = lex_code_body(
-                &mut fsm.code_fsm,
+                &mut fsm.code_mode,
                 walker,
-                fsm.heredoc.1,
+                cfg.heredoc.1,
                 LexType::HereDocClose,
-            );
+            )?;
             if is_done {
                 fsm.mode = CellMode::Text;
             }
-            t
+            Ok(t)
         }
         CellMode::Inline => {
             let (t, is_done) = lex_code_body(
-                &mut fsm.code_fsm,
+                &mut fsm.code_mode,
                 walker,
-                fsm.inline.1,
+                cfg.inline.1,
                 LexType::InlineClose,
-            );
+            )?;
             if is_done {
                 fsm.mode = CellMode::Text;
             }
-            t
+            Ok(t)
         }
-        //CellMode::HereDoc | CellMode::Inline => {
-        //    #[allow(dead_code)]
-        //    let (closer_str, closer) = match fsm.mode {
-        //        CellMode::HereDoc => (fsm.heredoc.1, LexType::HereDocClose),
-        //        CellMode::Inline => (fsm.inline.1, LexType::InlineClose),
-        //        _ => unreachable!(),
-        //    };
-
-        //    let (t, is_done) = lex_code_body(&mut fsm.code_fsm, walker, closer_str, closer);
-        //    if is_done {
-        //        fsm.mode = CellMode::Text;
-        //    }
-        //    //if t.is_ok() {
-        //    //    walker.skip(walker.ch.len_utf8() + closer_len);
-        //    //    fsm.mode = CellMode::Transition;
-        //    //    //fsm.transition_to = Some(());
-        //    //}
-        //    t
-        //}
-        CellMode::Finish => Ok(None),
-        //_ => Ok(None),
     }
 }
 
 /******************************************************************************
  * Code-cell-level FSM
  ******************************************************************************/
-// This
-struct CodeFsm {
-    mode: CodeMode,
-}
-
-impl CodeFsm {
-    fn new() -> Self {
-        Self {
-            mode: CodeMode::Regular,
-        }
-    }
-}
-
 #[derive(Debug)]
 enum CodeMode {
     Regular,
     Quote,
 }
-
-//
 
 // First character must be alphabetic
 fn is_invalid_second_ident_char(c: char) -> bool {
@@ -356,29 +258,30 @@ fn is_invalid_second_ident_char(c: char) -> bool {
 }
 
 fn lex_code_body(
-    fsm: &mut CodeFsm,
+    mode: &mut CodeMode,
     walker: &mut Walker,
     closer_str: &str,
     closer: LexType,
-) -> (PullParseOutput, bool) {
+) -> PullResult<(Option<Lexeme>, bool)> {
     // Eat whitespace
-    walker.advance_until(|c| !c.is_whitespace());
+    walker.peek_until(|c, _| !c.is_whitespace());
 
-    // Handle EOF error
-    let (ch, curr, post) = if let Some(x) = walker.advance(STILL) {
+    let (ch, curr, post) = if let Some(x) = walker.advance() {
         x
     } else {
-        debug_assert_eq!(walker.curr, walker.original.len(), "Should be at EOF");
-        let source = Source::Range(walker.curr, walker.original.len());
+        let source = Source::Range(walker.post, walker.original.len());
         let token = Token::new("Did not terminate code block", source);
-        return (Err(token), false);
+        return Err(token);
     };
+    //println!("{:?} {:?}", ch, &walker.original[curr..post+10]);
 
     // Main FSM branching handling
-    let (maybe_token_type, skip_amount, finished) = match (&fsm.mode, ch) {
+    let (maybe_token_type, finished) = match (&mode, ch) {
         // Everything else
         (CodeMode::Regular, _) if walker.original[curr..].starts_with(closer_str) => {
-            (closer, closer_str.len(), true)
+            debug_assert!(closer_str.len() > 0, "Should have been caught when setting {{Config}}.");
+            walker.increment_post_by(curr + closer_str.len() - post);
+            (closer, true)
         }
         (CodeMode::Regular, _) if ch.is_ascii_alphabetic() => {
             // First check in 'if'
@@ -386,89 +289,77 @@ fn lex_code_body(
                 !is_invalid_second_ident_char(ch),
                 "First char of idents should also satisfy second+ char requirements"
             );
-            let ident_len = walker.original[curr..]
+            let ident_post = walker.original[post..]
                 .find(is_invalid_second_ident_char)
                 .unwrap_or(0);
-            let peek_post = walker.post + ident_len;
-            if &walker.original[walker.curr + ident_len..peek_post] == "(" {
-                (LexType::IdentParen, ident_len + len_utf8!('(' => 1), false)
+            let peek_post = walker.post + ident_post;
+            if walker.original[peek_post..].starts_with('(') {
+                walker.increment_post_by(ident_post + len_utf8!('(' => 1));
+                (LexType::IdentParen, false)
             } else {
-                (LexType::Ident, ident_len, false)
+                walker.increment_post_by(ident_post);
+                (LexType::Ident, false)
             }
         }
-        (CodeMode::Regular, '|') => (LexType::Pipe, len_utf8!('|' => 1), false),
-        (CodeMode::Regular, '(') => (LexType::ParenStart, len_utf8!('|' => 1), false),
-        (CodeMode::Regular, ')') => (LexType::ParenClose, len_utf8!('|' => 1), false),
-        (CodeMode::Regular, '.') => (LexType::Stdin, len_utf8!('.' => 1), false),
-        (CodeMode::Regular, ':') => (LexType::KeyValSeparator, len_utf8!(':' => 1), false),
-        (CodeMode::Regular, ',') => (LexType::ArgSeparator, len_utf8!(',' => 1), false),
-        (CodeMode::Regular, ';') => (LexType::StmtSeparator, len_utf8!(';' => 1), false),
-        (CodeMode::Regular, '=') => (LexType::Assign, len_utf8!('=' => 1), false),
+        (CodeMode::Regular, '|') => (LexType::Pipe, false),
+        (CodeMode::Regular, '(') => (LexType::ParenStart, false),
+        (CodeMode::Regular, ')') => (LexType::ParenClose, false),
+        (CodeMode::Regular, '.') => (LexType::Stdin, false),
+        (CodeMode::Regular, ':') => (LexType::KeyValSeparator, false),
+        (CodeMode::Regular, ',') => (LexType::ArgSeparator, false),
+        (CodeMode::Regular, ';') => (LexType::StmtSeparator, false),
+        (CodeMode::Regular, '=') => (LexType::Assign, false),
         (CodeMode::Regular, '"') => {
-            fsm.mode = CodeMode::Quote;
-            (LexType::QuoteStart, len_utf8!('"' => 1), false)
+            *mode = CodeMode::Quote;
+            (LexType::QuoteStart, false)
         }
 
         // Quotation stuff
         (CodeMode::Quote, '"') => {
-            fsm.mode = CodeMode::Regular;
-            (LexType::QuoteClose, 1, false)
+            *mode = CodeMode::Regular;
+            (LexType::QuoteClose, false)
         }
         (CodeMode::Quote, '\\') => {
             // `skip(1)` because we `advance(AHEAD)`. Effectively, we `skip(2)`
-            if let Some((ch, _, _)) = walker.advance(AHEAD) {
+            if let Some((ch, _, _)) = walker.advance() {
                 match ch {
-                    'n' => (LexType::QuoteLiteral("\n"), len_utf8!(ch => 1), false),
-                    't' => (LexType::QuoteLiteral("\t"), len_utf8!(ch => 1), false),
-                    '"' => (LexType::QuoteLiteral("\""), len_utf8!(ch => 1), false),
-                    ' ' | '\n' => (LexType::QuoteLiteral(""), len_utf8!(ch => 1), false),
+                    'n' => (LexType::QuoteLiteral("\n"), false),
+                    't' => (LexType::QuoteLiteral("\t"), false),
+                    '"' => (LexType::QuoteLiteral("\""), false),
+                    ' ' | '\n' => (LexType::QuoteLiteral(""), false),
                     _ => {
                         let source = Source::Range(curr, post);
                         let token = Token::new("Missing closing quotation mark", source);
-                        return (Err(token), false);
+                        return Err(token);
                     }
                 }
-            } else {
+            } else { // EOF
                 let source = Source::Range(curr, walker.original.len());
                 let token = Token::new("Missing closing quotation mark", source);
-                return (Err(token), false);
+                return Err(token);
             }
         }
         (CodeMode::Quote, _) => {
-            let mut do_while = STILL;
-            while let Some((ch, _, _)) = walker.advance(do_while) {
-                if ch == '"' || ch == '\\' {
-                    break;
-                }
-                do_while = AHEAD;
-            }
-
-            if walker.is_end() {
-                let source = Source::Range(curr, post);
+            let is_found = walker.peek_until(|c, _| c == '"' || c == '\\');
+            if is_found {
+                (LexType::Text, false)
+            } else {
+                let source = Source::Range(curr, post); // The quote mark
                 let token = Token::new("Missing closing quotation mark", source);
-                return (Err(token), false);
+                return Err(token);
             }
-
-            // `skip(0)` because we already advanced {walker}
-            debug_assert!(walker.ch == '"' || walker.ch == '\\');
-            (LexType::Text, 0, false)
         }
 
-        //(CodeMode::Quote, '\"') => {
-        //    walker.advance(AHEAD);
-        //    LexType::QuoteStart
-        //}
         _ => {
             let source = Source::Range(curr, post);
-            println!("CodeMode::{:?}", fsm.mode);
-            return (Err(Token::new("lexer.rs: Invalid Syntax", source)), false);
+            eprintln!("CodeMode::{:?} {:?}", mode, ch);
+            return Err(Token::new("lexer.rs: Invalid Syntax", source));
         }
     };
 
-    walker.skip(skip_amount);
-    let source = Source::Range(curr, walker.curr);
+    let source = Source::Range(curr, walker.post);
     let token = Token::new(maybe_token_type, source);
-    (Ok(Some(token)), finished)
+    Ok((Some(token), finished))
 }
 
 /******************************************************************************
@@ -477,15 +368,11 @@ fn lex_code_body(
 // Remakes the {original} from {lexemes}
 fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
     // @TODO: Input config as an argument
-    struct Config {
-        heredoc: (&'static str, &'static str),
-        inline: (&'static str, &'static str),
-        comment: (&'static str, &'static str),
-    }
     let config = Config {
         heredoc: ("{|", "|}"),
         inline: ("{$", "$}"),
         comment: ("{#", "#}"),
+        literals: &[],
     };
     let mut buffer = String::with_capacity(original.len());
     let mut mode = CellMode::Text;
@@ -572,6 +459,7 @@ fn reconstruct_string(original: &str, lexemes: &[Lexeme]) -> String {
             LexType::ArgSeparator => push_check!(buffer ',' if text == ","),
             LexType::StmtSeparator => push_check!(buffer ';' if text == ";"),
             LexType::Assign => push_check!(buffer '=' if text == "="),
+
 
             LexType::Literal("{|") => buffer.push_str("{{|"),
             LexType::Literal("|}") => buffer.push_str("|}}"),
