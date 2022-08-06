@@ -39,7 +39,7 @@ mod tests {
     use std::fmt::Debug;
 
     use super::*;
-    use api::{FileType, Metadata};
+    use api::{FileType, Config};
     use framework::{self, Token};
 
     //#[test]
@@ -90,7 +90,7 @@ mod tests {
         let ctx = default_context();
         let out = match ctx.run(
             &ast,
-            Metadata::new(FileType::Markdown, FileType::AsciiDoctor),
+            Config::new(FileType::Markdown, FileType::AsciiDoctor),
             file,
         ) {
             Ok(s) => s,

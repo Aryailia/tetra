@@ -3,13 +3,13 @@
 
 #[cfg(test)]
 mod tests {
-    use tetra::api::{FileType, Metadata};
+    use tetra::api::{FileType, Config};
 
     macro_rules! compare_eq {
         ($ctx:ident, $( $source:literal => $answer:literal )*) => {
-            let metadata = Metadata::new(FileType::Markdown, FileType::HTML);
+            let config = Config::new(FileType::Markdown, FileType::HTML);
             $( assert_eq!(
-                $ctx.compile($source, metadata.clone()).as_ref().map(String::as_str),
+                $ctx.compile($source, config.clone()).as_ref().map(String::as_str),
                 Ok($answer)
             ); )*
         };

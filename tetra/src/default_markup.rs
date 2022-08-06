@@ -7,6 +7,8 @@
 use std::borrow::Cow;
 use std::fs;
 
+use common::FileType;
+
 // Do not use super so that if others want to make their own flavour, they
 // can copy this file without issue
 use crate::run::{Bindings, Dirty, Error, PureResult, StatefulResult};
@@ -17,7 +19,7 @@ use crate::run::utility::{fetch_env_var, run_command};
 use crate::run::value as v;
 use crate::run::{LIMITED, UNLIMITED}; // these are just bools
 
-use crate::api::{Api, FileType};
+use crate::api::Api;
 
 // The main difference between pure and stateful functions is that
 // * pure functions run only once (once all their arguments are ready) and
@@ -212,14 +214,13 @@ pub fn pandoc_cite(citekey: &str, filetype: &FileType) -> Result<String, Error> 
     let bibliography = fetch_env_var("BIBLIOGRAPHY")?;
     let write_format = match filetype {
         FileType::AsciiDoctor => "asciidoctor",
-        FileType::Markdown => "markdown_strict",
         FileType::CommonMark => "commonmark",
+        FileType::Markdown => "markdown_strict",
         FileType::RMarkdown => "markdown_strict",
         FileType::PDF => panic!(),
         FileType::LaTeX => "latex",
         FileType::HTML => "html5",
         FileType::Default => "plain",
-        FileType::Custom(_) => panic!(),
     };
     let citation = run_command(
         "pandoc",

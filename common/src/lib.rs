@@ -4,10 +4,12 @@
 
 use std::borrow::Cow;
 
-mod walker; pub use walker::Walker;
-mod asciidoctor; use asciidoctor::AsciiDoctor;
-mod commonmark; use commonmark::CommonMark;
-
+mod walker;
+pub use walker::Walker;
+mod asciidoctor;
+use asciidoctor::AsciiDoctor;
+mod commonmark;
+use commonmark::CommonMark;
 
 #[derive(Debug)]
 pub struct Metadata<'a> {
@@ -15,48 +17,37 @@ pub struct Metadata<'a> {
     pub links: Vec<(Cow<'a, str>, Cow<'a, str>)>,
 }
 
-// 'enum_dispatch' might be useful
-macro_rules! declare {
-    ($enum:ident, $( $variant:ident : $struct:ident $(, $val:expr)*; )*) => {
+// Defines 'pub enum FileType' and 'FROM_EXT'
+include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 
-        #[derive(Debug)]
-        #[repr(usize)]
-        pub enum $enum {
-            $( $variant, )*
-        }
+impl FileType {
+    pub const fn id(&self) -> usize {
+        // SAFETY: The representation of $enum is set
+        unsafe { *(self as *const Self as *const usize) }
+    }
 
-        const VTABLE: [&dyn Analyse; 0 $( + { _ = $enum::$variant; 1 } )*] = [
-            $( &$struct(), )*
-        ];
-
-        impl $enum {
-            pub const fn id(&self) -> usize {
-                // SAFETY: The representation of $enum is set
-                unsafe { *(self as *const Self as *const usize) }
-            }
-        }
-
-        pub trait Analyse {
-            fn metadata<'a>(&self, _source: &'a str) -> Metadata<'a> { todo!() }
-        }
-
-        impl Analyse for $enum {
-            fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
-                VTABLE[self.id()].metadata(source)
-            }
-        }
-    };
+    pub fn from(extension: &str) -> Self {
+        FROM_EXT
+            .get(extension)
+            .copied()
+            .unwrap_or(FileType::Default)
+    }
 }
 
-declare! {FileType,
-    AsciiDoctor: AsciiDoctor;
-    //Markdown;
-    CommonMark: CommonMark;
+pub trait Analyse {
+    fn metadata<'a>(&self, _source: &'a str) -> Metadata<'a> {
+        todo!()
+    }
+}
+
+impl Analyse for FileType {
+    fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
+        VTABLE[self.id()].metadata(source)
+    }
 }
 
 struct Todo();
-impl Analyse for Todo{}
-
+impl Analyse for Todo {}
 
 #[cfg(test)]
 mod tests {

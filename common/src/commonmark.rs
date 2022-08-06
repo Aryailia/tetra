@@ -1,8 +1,8 @@
 //run: cargo test -- --nocapture
 
-use std::mem;
-use std::borrow::Cow;
 use pulldown_cmark::{CowStr, Event, Parser, Tag};
+use std::borrow::Cow;
+use std::mem;
 
 use super::{Analyse, Metadata};
 
@@ -15,13 +15,12 @@ impl Analyse for CommonMark {
 
         //let mut options = Options::empty();
         //let mut parser = Parser::new_ext(source, options);
-        let mut parser = Parser::new(source);
 
         let mut build_link = (Cow::Borrowed(""), Cow::Borrowed(""));
         let mut build_header = (0, Cow::Borrowed(""));
         let mut outline = Vec::new();
         let mut links = Vec::new();
-        while let Some(event) = parser.next() {
+        for event in Parser::new(source) {
             let mut event_text = None;
             match event {
                 Event::Start(Tag::Heading(heading_level, _, _)) => {
@@ -35,7 +34,6 @@ impl Analyse for CommonMark {
                     let default = (0, Cow::Borrowed(""));
                     outline.push(mem::replace(&mut build_header, default));
                 }
-
 
                 Event::Start(Tag::Link(_, url, _)) => {
                     debug_assert!(!is_link);
@@ -71,14 +69,9 @@ impl Analyse for CommonMark {
                 }
             }
         }
-        Metadata {
-            outline,
-            links,
-        }
+        Metadata { outline, links }
     }
 }
-
-
 
 fn cowstr_to_cow(custom: CowStr) -> Cow<str> {
     match &custom {
@@ -86,7 +79,6 @@ fn cowstr_to_cow(custom: CowStr) -> Cow<str> {
         CowStr::Borrowed(s) => Cow::Borrowed(s),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

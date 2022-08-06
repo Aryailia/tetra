@@ -1,7 +1,7 @@
 //run: cargo test -- --nocapture
 use tetra::{
     self,
-    api::{FileType, Metadata},
+    api::{FileType, Config},
 };
 
 use std::env;
@@ -31,7 +31,7 @@ fn main() {
     let output = ctx
         .compile(
             &buffer,
-            Metadata::new(FileType::Markdown, FileType::Markdown),
+            Config::new(FileType::Markdown, FileType::Markdown),
         )
         .unwrap();
 

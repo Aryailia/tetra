@@ -1,10 +1,10 @@
+use std::env;
 use std::fs;
-use std::io;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 
 use tetra::{
     self as tetralib,
-    api::{FileType, Metadata},
+    api::{FileType, Config},
 };
 //use xflags;
 
@@ -77,7 +77,7 @@ fn main() {
     if let Some(path) = target_file {
         let output = match ctx.compile(
             &contents,
-            Metadata::new(FileType::Default, FileType::from(path.as_str())),
+            Config::new(FileType::Default, FileType::from(path.as_str())),
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -85,12 +85,12 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        let mut buffer = fs::File::create(&path).unwrap();
+        let mut buffer = log(&path, fs::File::create(&path));
         buffer.write_all(output.as_bytes()).unwrap();
     } else {
         match ctx.compile(
             &contents,
-            Metadata::new(FileType::Default, FileType::AsciiDoctor),
+            Config::new(FileType::Default, FileType::AsciiDoctor),
         ) {
             Ok(s) => println!("{}", s),
             Err(err) => {
@@ -100,3 +100,20 @@ fn main() {
         };
     }
 }
+
+fn log<T>(path: &str, result: io::Result<T>) -> T {
+    match result {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("tetra-cli {:?}", env::args());
+            eprintln!("Error with {:?}\n{:?}", path, e);
+            std::process::exit(1);
+            //panic!("\n{:?}\n{}", e, e.get_context(original));
+        }
+        //Err(e) => match e {
+        //    CustomErr::Parse(err) => panic!("\nERROR: {:?}\n", err.msg()),
+        //    err => panic!("{:?}", err),
+        //},
+    }
+}
+

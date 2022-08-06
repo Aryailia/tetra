@@ -25,7 +25,7 @@ pub use function::{Dirty, DirtyValue, LIMITED, UNLIMITED};
 
 ////////////////////////////////////////////////////////////////////////////////
 
-use crate::api::Metadata;
+use crate::api::Config;
 use crate::framework::Source;
 use crate::parser::{self, AstOutput, Param};
 use crate::Token;
@@ -166,8 +166,8 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
     // Defined in the "run/executor.rs"
     //pub fn run();
 
-    pub fn compile(&self, original: &str, metadata: Metadata) -> Result<String, String> {
-        self.run(&Self::build(original)?, metadata, original)
+    pub fn compile(&self, original: &str, config: Config) -> Result<String, String> {
+        self.run(&Self::build(original)?, config, original)
     }
 
 }

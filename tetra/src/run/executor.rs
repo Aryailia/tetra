@@ -7,7 +7,7 @@ use std::mem;
 use super::utility::concat;
 use super::{Bindings, Dirty, DirtyValue, Func, Value, Variables};
 
-use crate::api::{Api, Metadata};
+use crate::api::{Api, Config};
 use crate::framework::Token;
 use crate::parser::{AstOutput, Command, Label, Param};
 
@@ -24,17 +24,17 @@ impl<'a, K, V: Clone> Bindings<'a, K, V> {
     pub fn run(
         &self,
         ast: &AstOutput,
-        metadata: Metadata,
+        config: Config,
         original: &str,
     ) -> Result<String, String> {
-        run(self, ast, metadata, original)
+        run(self, ast, config, original)
     }
 }
 
 pub fn run<'a, K, V: Clone>(
     ctx: &Bindings<'a, K, V>,
     AstOutput(ast, args, _): &AstOutput,
-    metadata: Metadata,
+    config: Config,
     original: &str,
 ) -> Result<String, String> {
     let mut internal: HashMap<&str, Value<V>> = HashMap::new();
@@ -102,7 +102,7 @@ pub fn run<'a, K, V: Clone>(
                                     params
                                         .check_args(&ctx.parameters, bindings)
                                         .and_then(|_| {
-                                            f.call(bindings, Api::new(original, i, &metadata))
+                                            f.call(bindings, Api::new(original, i, &config))
                                         })
                                         .map_err(|err| {
                                             err.to_display(
@@ -119,7 +119,7 @@ pub fn run<'a, K, V: Clone>(
                                         .and_then(|_| {
                                             f.call(
                                                 bindings,
-                                                Api::new(original, i, &metadata),
+                                                Api::new(original, i, &config),
                                                 old_output,
                                                 &mut external,
                                             )
@@ -153,7 +153,7 @@ pub fn run<'a, K, V: Clone>(
                 Label::Concat => {
                     // @TODO: have errors return which argument is bad
                     let output =
-                        concat(bindings, Api::new(original, i, &metadata)).map_err(|e| {
+                        concat(bindings, Api::new(original, i, &config)).map_err(|e| {
                             e.to_display(original, &cmd.label.source, &args[cmd.args.0..cmd.args.1])
                         })?;
                     outputs[i] = (Dirty::Ready, output);
