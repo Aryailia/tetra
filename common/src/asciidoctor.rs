@@ -18,6 +18,7 @@ pub struct AsciiDoctor();
 // Just a dirty solution that only handles 'link:url.com/[]' type links
 // and handles '== Header' type titles, no escaping, etc.
 impl Analyse for AsciiDoctor {
+    fn comment_prefix(&self) -> &'static str { "//" }
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         enum M {
             Text,

@@ -35,12 +35,15 @@ impl FileType {
 }
 
 pub trait Analyse {
+    fn comment_prefix(&self) -> &'static str { todo!("Unknown line comment symbol.") }
     fn metadata<'a>(&self, _source: &'a str) -> Metadata<'a> {
         todo!()
     }
+
 }
 
 impl Analyse for FileType {
+    fn comment_prefix(&self) -> &'static str { VTABLE[self.id()].comment_prefix() }
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         VTABLE[self.id()].metadata(source)
     }
@@ -56,6 +59,7 @@ mod tests {
 
     #[test]
     fn it_works() {
+        assert_eq!("//", FileType::from("adoc").comment_prefix());
         //FileType::AsciiDoctor.metadata("= Yo");
     }
 }

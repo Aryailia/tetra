@@ -66,6 +66,10 @@ impl<'a> Walker<'a> {
         }
         false
     }
+
+    pub fn peek(&mut self) -> Option<&char> {
+        self.iter.peek()
+    }
 }
 
 #[test]

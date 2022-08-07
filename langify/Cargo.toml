@@ -1,21 +1,10 @@
 [package]
-name = "tetra-cli"
+name = "langify"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[build-dependencies]
-tetra = { path = "tetra" }
-
 [dependencies]
-tetra = { path = "tetra" }
+common = { path = "../common" }
 xflags = "0.2.4"
-
-[workspace]
-members = [
-  "common",
-  "langify",
-  "tetra",
-  "webserver",
-]

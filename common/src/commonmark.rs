@@ -9,6 +9,8 @@ use super::{Analyse, Metadata};
 pub struct CommonMark();
 
 impl Analyse for CommonMark {
+    fn comment_prefix(&self) -> &'static str { "<!--" }
+
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         let mut is_header = false;
         let mut is_link = false;
