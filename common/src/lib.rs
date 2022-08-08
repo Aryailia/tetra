@@ -2,7 +2,10 @@
 
 //#![feature(round_char_boundary)]
 
+use std::fmt::Write as _;
 use std::borrow::Cow;
+
+use tinyjson::JsonValue;
 
 mod walker;
 pub use walker::Walker;
@@ -17,6 +20,39 @@ pub struct Metadata<'a> {
     pub links: Vec<(Cow<'a, str>, Cow<'a, str>)>,
 }
 
+impl<'a> Metadata<'a> {
+    pub fn to_json(&self) -> String {
+        let mut buffer = String::new();
+        buffer.push_str("{\"outline\":[");
+
+        let mut iter = self.outline.iter();
+        if let Some((level, body)) = iter.next() {
+            let body_json = JsonValue::String(body.to_string()).stringify().unwrap();
+            write!(&mut buffer, "[{},{}]", level, body_json).unwrap();
+            for (level, body) in iter {
+                let body_json = JsonValue::String(body.to_string()).stringify().unwrap();
+                write!(&mut buffer, ",[{},{}]", level, body_json).unwrap();
+            }
+        }
+
+        buffer.push_str("],\"links\":[");
+
+        let mut iter = self.links.iter();
+        if let Some((uri, body)) = iter.next() {
+            let uri_json = JsonValue::String(uri.to_string()).stringify().unwrap();
+            let body_json = JsonValue::String(body.to_string()).stringify().unwrap();
+            write!(&mut buffer, "[{},{}]", uri_json, body_json).unwrap();
+            for (uri, body) in iter {
+                let uri_json = JsonValue::String(uri.to_string()).stringify().unwrap();
+                let body_json = JsonValue::String(body.to_string()).stringify().unwrap();
+                write!(&mut buffer, ",[{},{}]", uri_json, body_json).unwrap();
+            }
+        }
+        buffer.push_str("]}");
+        buffer
+    }
+}
+
 // Defines 'pub enum FileType' and 'FROM_EXT'
 include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 
@@ -26,11 +62,10 @@ impl FileType {
         unsafe { *(self as *const Self as *const usize) }
     }
 
-    pub fn from(extension: &str) -> Self {
+    pub fn from(extension: &str) -> Option<Self> {
         FROM_EXT
             .get(extension)
             .copied()
-            .unwrap_or(FileType::Default)
     }
 }
 
@@ -59,7 +94,9 @@ mod tests {
 
     #[test]
     fn it_works() {
-        assert_eq!("//", FileType::from("adoc").comment_prefix());
+        assert_eq!("//", FileType::from("adoc").unwrap().comment_prefix());
+        let file = std::fs::read_to_string("../readme-source.md").unwrap();
+        FileType::CommonMark.metadata(&file).to_json();
         //FileType::AsciiDoctor.metadata("= Yo");
     }
 }

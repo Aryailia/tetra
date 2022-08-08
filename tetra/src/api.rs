@@ -2,7 +2,7 @@
 
 //use std::collections::HashMap;
 
-pub use common::FileType;
+pub use common::*;
 
 // Maybe see OPML spec for design
 // {usize} is the level, so we can pack it into an array

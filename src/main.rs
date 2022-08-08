@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 
 use tetra::{
     self as tetralib,
-    api::{FileType, Config},
+    api::{Analyse, FileType, Config},
 };
 //use xflags;
 
@@ -15,7 +15,9 @@ mod flags {
     #![allow(unused)]
     xflags::xflags! {
         /// Runs the Tetra parser on the file of your choice
-        cmd tetra {
+        cmd tetra
+
+        {
 
             /////
             //optional --dry-run
@@ -23,85 +25,132 @@ mod flags {
             /// Prints the help message
             optional -h, --help
 
+            ///// blah
+            optional -i, --input-type input_type: String
+
+            ///// Sets the filetype of
+            optional -o, --output-type output_type: String
+
             /// Parse tree
             cmd parse
                 ///
-                required input_file: String
+                required inp_path: String
 
                 ///
-                optional output_file: String
+                optional out_path: String
             {
             }
 
             /// Runs this on the stdin
             cmd parse-stdin
                 /////
-                optional output_file: String
+                optional out_path: String
             {
             }
+
+            /// Same as the 'parse' subcommand, but print out some metadata as JSON
+            cmd parse-and-json
+                // Cannot make the first argument optional
+
+                ///
+                required inp_path: String
+
+                ///
+                required out_path: String
+            {}
         }
     }
 }
 
-//run: cargo run -- parse a
+//run: cargo run -- parse-and-json ../readme-source.md /dev/null | jq
 fn main() {
-    //let bang = if flags.emoji { "❣️" } else { "!" };
+    // Process global flags first
+    let (inp_filetype, out_filetype, subcommands) = match flags::Tetra::from_env() {
+        Ok(args) if args.help => {
+            eprintln!("{}", flags::Tetra::HELP);
+            std::process::exit(1)
+        }
+        Ok(args) => {
+            // If we explicitly set an invalid filetype, error (with list of valid ones)
+            let inp = args.input_type.as_ref().map(|ext| {
+                FileType::from(ext).unwrap_or_else(|| {
+                    eprintln!("{} is an unsupported file type", ext);
+                    std::process::exit(1);
+                })
+            });
 
-    let (contents, target_file) = match flags::Tetra::from_env() {
-        Ok(flags) => match flags.subcommand {
-            flags::TetraCmd::Parse(p) => match fs::read_to_string(&p.input_file) {
-                Ok(s) => (s, p.output_file),
-                Err(err) => {
-                    eprintln!("{}. {:?}", err, p.input_file);
-                    std::process::exit(1)
-                }
-            },
-            flags::TetraCmd::ParseStdin(p) => {
-                let mut s = String::new();
-                match io::stdin().read_to_string(&mut s) {
-                    Ok(_) => (s, p.output_file),
-                    Err(err) => {
-                        eprintln!("Could not read from STDIN. {}", err);
-                        std::process::exit(1)
-                    }
-                }
-            }
-        },
+            let out = args.output_type.as_ref().map(|ext| {
+                FileType::from(ext).unwrap_or_else(|| {
+                    eprintln!("{} is an unsupported file type", ext);
+                    std::process::exit(1);
+                })
+            });
+            (inp, out, args.subcommand)
+        }
         Err(err) => {
             eprintln!("{}\n{}", err, flags::Tetra::HELP);
             std::process::exit(1)
         }
     };
 
-    let ctx = tetralib::default_context();
-    if let Some(path) = target_file {
-        let output = match ctx.compile(
-            &contents,
-            Config::new(FileType::Default, FileType::from(path.as_str())),
-        ) {
-            Ok(s) => s,
-            Err(err) => {
-                eprintln!("{}", err);
-                std::process::exit(1);
-            }
-        };
-        let mut buffer = log(&path, fs::File::create(&path));
-        buffer.write_all(output.as_bytes()).unwrap();
+    // Intepret the subcommands
+    let (inp_path, out_path, is_print_json) = match subcommands {
+        flags::TetraCmd::Parse(p) => (Some(p.inp_path), p.out_path, false),
+        flags::TetraCmd::ParseStdin(p) => (None, p.out_path, false),
+        flags::TetraCmd::ParseAndJson(p) => (Some(p.inp_path), Some(p.out_path), true),
+    };
+
+
+    // Read the file from STDIN or {inp_path}, setting {inp_filetype} if appropriate
+    let (inp_content, inp_filetype) = if let Some(path) = inp_path {
+        // Prefer the '--input-type' switch override. Else find it from {path}
+        let ft = inp_filetype.unwrap_or_else(|| path
+            .rfind(|c| c == '.')
+            .and_then(|i| FileType::from(&path[i + 1..]))
+            // No extension or extension not supported, just use 'FileType::Default'
+            .unwrap_or(FileType::Default)
+        );
+        (log(&path, fs::read_to_string(&path)), ft)
     } else {
-        match ctx.compile(
-            &contents,
-            Config::new(FileType::Default, FileType::AsciiDoctor),
-        ) {
-            Ok(s) => println!("{}", s),
-            Err(err) => {
-                eprintln!("{}", err);
-                std::process::exit(1);
-            }
-        };
+        let mut stdin = String::new();
+        log("STDIN", io::stdin().read_to_string(&mut stdin));
+        (stdin, FileType::Default)
+    };
+
+    // Set the {out_filetype} if not overridden by the '--output-type' switch
+    let out_filetype = out_filetype.unwrap_or_else(|| {
+        out_path
+            .as_ref()
+            .and_then(|path| path
+                .rfind(|c| c == '.')
+                .and_then(|i| FileType::from(&path[i + 1..]))
+            )
+            // No extension or extension not supported, just use 'FileType::Default'
+            .unwrap_or(FileType::Default)
+    });
+
+
+    // Compile
+    let ctx = tetralib::default_context();
+    let config = Config::new(inp_filetype, out_filetype);
+    let out_content = log("compiling", ctx.compile(&inp_content, config));
+
+    // Write to output
+    if let Some(path) = out_path {
+        let mut buffer = log(&path, fs::File::create(&path));
+        log(&path, buffer.write_all(out_content.as_bytes()));
+
+        if is_print_json {
+            println!("{}", inp_filetype.metadata(&out_content).to_json());
+        }
+    } else {
+        println!("{}", out_content);
+        debug_assert!(!is_print_json);
     }
+
 }
 
-fn log<T>(path: &str, result: io::Result<T>) -> T {
+fn log<T, E: std::fmt::Debug>(path: &str, result: Result<T, E>) -> T {
     match result {
         Ok(s) => s,
         Err(e) => {
