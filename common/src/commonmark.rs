@@ -3,15 +3,49 @@
 use pulldown_cmark::{CowStr, Event, Parser, Tag};
 use std::borrow::Cow;
 use std::mem;
+use std::collections::HashMap;
 
 use super::{Analyse, Metadata};
 
 pub struct CommonMark();
 
+// Currently pulldown_cmark does not support frontmatter
+// See #580: https://github.com/raphlinus/pulldown-cmark/issues/580
+//
+// So we do it ourselves
 impl Analyse for CommonMark {
-    fn comment_prefix(&self) -> &'static str { "<!--" }
+    fn comment_prefix(&self) -> &'static str {
+        "<!--"
+    }
 
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
+        let frontmatter = if source.starts_with("---\n") {
+            let post_start = &source["---\n".len()..];
+
+            // @TODO: simplify this into one loop? Might be less idomatic
+            if let Some(end) = post_start.find("\n---\n") {
+                Some(&post_start[..end])
+            } else if !post_start.is_empty()
+                && &source[source.len() - "\n---".len()..] == "\n---"
+            {
+                Some(&post_start[..post_start.len() - "\n---".len()])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut attributes = HashMap::new();
+        for line in frontmatter.unwrap_or("").lines() {
+            if let Some(colon_index) = line.find(':') {
+                let (key, val) = line.split_at(colon_index);
+                attributes.insert(key, val[":".len()..].trim());
+            }
+
+        }
+
+        ////////////////////////////////////////////////////////////////////////
         let mut is_header = false;
         let mut is_link = false;
 
@@ -50,7 +84,7 @@ impl Analyse for CommonMark {
                 }
 
                 Event::Text(cowstr) => event_text = Some(cowstr),
-                _ => { /*println!("{:?}", event);*/ }
+                _ => { /* println!("{:?}", event); */ }
             };
 
             if let Some(text) = event_text {
@@ -71,7 +105,7 @@ impl Analyse for CommonMark {
                 }
             }
         }
-        Metadata { outline, links }
+        Metadata { outline, links, attributes }
     }
 }
 
@@ -89,11 +123,13 @@ mod tests {
 
     #[test]
     fn works() {
-        //println!("{:?}", CommonMark().metadata(_FILE));
+        println!("{:?}", CommonMark().metadata(_FILE));
         //println!("{:?}", AsciiDoctor().outline("# hello\n== HOw are you\n==A SEcond\n")) ;
     }
 
-    const _FILE: &str = r#"
+    const _FILE: &str = r#"---
+test: yo
+---
 # Beautiful
 
 lorem ipsum

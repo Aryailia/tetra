@@ -10,6 +10,7 @@
 // whereas in Markdown, there can be multiple "# Header 1"
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use super::{Analyse, Metadata, Walker};
 
@@ -31,6 +32,7 @@ impl Analyse for AsciiDoctor {
 
         let mut outline = Vec::new();
         let mut links = Vec::new();
+        let mut attributes = HashMap::new();
 
         'main: loop {
             let start = walker.post;
@@ -38,11 +40,22 @@ impl Analyse for AsciiDoctor {
 
             match &state {
                 M::Text => {
-                    while let Some((ch, curr, _)) = walker.advance() {
+                    while let Some((ch, curr, post)) = walker.advance() {
                         match (prev, ch) {
                             ('\n', '=') => {
                                 state = M::Header;
                                 continue 'main;
+                            }
+                            ('\n', ':') => {
+                                walker.peek_until(|c, _| c == ':' || c.is_whitespace());
+                                if let Some(':') = walker.peek() {
+                                    let key = &source[post..walker.post];
+                                    let val_start = walker.post + ":".len();
+                                    walker.peek_until(|c, _| c == '\n');
+                                    let val = &source[val_start..walker.post];
+                                    attributes.insert(key, val.trim());
+
+                                }
                             }
                             (c, 'l') if !c.is_alphabetic() && source[curr..].starts_with("link:") => {
                                 walker.peek_until(|c, _| c == '[' || c.is_whitespace());
@@ -85,6 +98,7 @@ impl Analyse for AsciiDoctor {
         Metadata {
             outline,
             links,
+            attributes,
         }
     }
 }
@@ -114,7 +128,7 @@ mod tests {
     #[test]
     fn works() {
         //println!("{:?}", AsciiDoctor().metadata("# hello\n== HOw are you\n==A SEcond\n")) ;
-        //println!("{:?}", AsciiDoctor().metadata(FILE));
+        //println!("{:?}", AsciiDoctor().metadata(_FILE));
     }
 
     const _FILE: &str = r#"

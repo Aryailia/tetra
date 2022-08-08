@@ -164,6 +164,8 @@ sub build_blog {
       my $lang = $_ eq "ALL" ? $DEFAULT_LANG : $_;
       my $parse_path = "$CACHE_DIR/parsed/$lang/$relpath";
       my $out_relpath = "$POST_RELDIR/$lang/$relpath";
+      my $out_relstem = $out_relpath;
+      $out_relstem =~ s/\.([^.]+)$//;
 
       make_path(dirname($parse_path));
       make_path(dirname("$PUBLIC_DIR/$out_relpath"));
@@ -173,7 +175,7 @@ sub build_blog {
 
       `navbar=\Q$navbar\E \Q$TEMPLATES/website/post.pl\E \\
         \Q$parse_path\E \Q$DOMAIN\E \Q$lang\E \Q$other_langs\E \Q$json_str\E \\
-      >\Q$PUBLIC_DIR/$out_relpath\E `;
+      >\Q$PUBLIC_DIR/$out_relstem.html\E `;
 
       die "Error processing '$BLOG___DIR/$relpath' -> '$PUBLIC_DIR/$out_relpath'"
         if $? != 0;

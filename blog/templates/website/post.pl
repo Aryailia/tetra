@@ -22,15 +22,17 @@ binmode STDERR, ':encoding(utf8)';
 my $templates_dir = "";
 my ($input_path, $domain, $lang, $other_langs, $json_str) = @ARGV;
 my $json = decode_json($json_str);
+my %attributes = %{$json->{"attributes"}};
 
 basename($input_path) =~ /\.(.+?)$/;
 my $ext = lc($1);
 
 # read from JSON
-my $title = "WIP";
-my $date_updated = "WIP";
+my $title = ($attributes{"title"} or "");
+my $date_updated = ($attributes{"date-updated"} or "");
+$date_updated =~ s/ \d\d?:.*$//;
 
-#run: ../../make.pl --local compile
+#run: ../../make.pl clean --local compile
 
 
 print(<<EOF);
