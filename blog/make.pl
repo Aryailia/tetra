@@ -24,6 +24,7 @@ my $cwd = cwd();
 my $TEMPLATES = "templates";                 #
 my $CACHE_DIR = ".cache";                    #
 my $DOMAIN = "";  # The base for links, different for file:// and web hosting
+my $FORCE = 0;                               #
 my $LANGIFY = "../target/debug/langify";     # Splits by lang
 my $TETRACLI = "../target/debug/tetra-cli";  #
 
@@ -38,9 +39,13 @@ my $DEFAULT_LANG = "en";
 
 #run: perl % clean --local compile
 my %cmds = (
-  "--local" => ["description", sub {
+  "--local" => ["Set \$DOMAIN to for local links", sub {
     say STDERR "", "Set domain for local viewing";
     $DOMAIN = "$cwd/$PUBLIC_DIR";
+  }],
+  "--force" => ["Ignores checking if source file is newer than target file", sub {
+    say STDERR "", "Always compiling";
+    $FORCE = 1;
   }],
 
   "clean" => ["Removes \$PUBLIC_DIR", sub {
@@ -65,6 +70,7 @@ my %cmds = (
   }],
 );
 
+################################################################################
 sub build_website {
   say STDERR "Compiling the website...";
   my @files = enumerate_files_as_relpaths($OTHER__DIR);
@@ -121,12 +127,6 @@ sub build_website {
   say STDERR "  Failed $bad file(s)";
 }
 
-sub is_left_newer {
-  my ($l, $r) = @_;
-  return 1 if not -e $r;
-  return (stat $l)[9] > (stat $r)[9] ? 1 : 0;
-}
-
 sub compile_into_html {
   my ($program, $relpath, $inp_path, $out_path) = @_;
   my $navbar = navbar($relpath, "en");
@@ -144,7 +144,9 @@ sub build_blog {
 
   foreach my $relpath (@files) {
     my $inp_path = "$BLOG___DIR/$relpath";
-    if (not is_left_newer($inp_path, "$PUBLIC_DIR/$POST_RELDIR/en/$relpath")) {
+    my $relstem = $relpath; $relstem =~ s/\.([^.]+)$//;
+
+    if (not is_left_newer($inp_path, "$PUBLIC_DIR/$POST_RELDIR/en/$relstem.html")) {
       $skip += 1;
       next
     }
@@ -163,9 +165,7 @@ sub build_blog {
       my $langify_path = "$CACHE_DIR/langify/$_/$relpath";
       my $lang = $_ eq "ALL" ? $DEFAULT_LANG : $_;
       my $parse_path = "$CACHE_DIR/parsed/$lang/$relpath";
-      my $out_relpath = "$POST_RELDIR/$lang/$relpath";
-      my $out_relstem = $out_relpath;
-      $out_relstem =~ s/\.([^.]+)$//;
+      my $out_relpath = "$POST_RELDIR/$lang/$relstem.html";
 
       make_path(dirname($parse_path));
       make_path(dirname("$PUBLIC_DIR/$out_relpath"));
@@ -175,7 +175,7 @@ sub build_blog {
 
       `navbar=\Q$navbar\E \Q$TEMPLATES/website/post.pl\E \\
         \Q$parse_path\E \Q$DOMAIN\E \Q$lang\E \Q$other_langs\E \Q$json_str\E \\
-      >\Q$PUBLIC_DIR/$out_relstem.html\E `;
+      >\Q$PUBLIC_DIR/$out_relpath\E `;
 
       die "Error processing '$BLOG___DIR/$relpath' -> '$PUBLIC_DIR/$out_relpath'"
         if $? != 0;
@@ -194,6 +194,12 @@ sub build_blog {
 sub navbar {
   my ($relpath, $lang) = @_;
   return `\Q$TEMPLATES/website/navbar.sh\E \Q$DOMAIN\E \Q$relpath\E \Q$lang\E`;
+}
+
+sub is_left_newer {
+  my ($l, $r) = @_;
+  return 1 if $FORCE or not -e $r;
+  return (stat $l)[9] > (stat $r)[9] ? 1 : 0;
 }
 
 sub enumerate_files_as_relpaths {
@@ -218,12 +224,16 @@ sub enumerate_files_as_relpaths {
 
 
 sub my_make {
-  foreach (@_) {
-    if (exists($cmds{$_})) {
-      $cmds{$_}[1]();
-    } else {
-      say "Unknown subcommand '$_'";
-      help();
+  if ($#_  == 0) {
+    help();
+  } else {
+    foreach (sort @_) {
+      if (exists($cmds{$_})) {
+        $cmds{$_}[1]();
+      } else {
+        say "Unknown subcommand '$_'";
+        help();
+      }
     }
   }
 }
@@ -231,7 +241,7 @@ sub my_make {
 sub help {
   print(<<EOF);
 SYNOPSIS
-  $0 
+  $0 <subcommand1> [<subcommand2> [..]]
 
 DESCRIPTION
   Functions much like a Makefile
