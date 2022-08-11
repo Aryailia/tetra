@@ -52,9 +52,9 @@ fn main() {
         Markdown: Todo;
         RMarkdown: Todo;
 
-        HTML: Todo;
+        Html: Todo;
         LaTeX: Todo;
-        PDF: Todo;
+        Pdf: Todo;
 
         Default: Todo;
     }

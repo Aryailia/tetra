@@ -217,9 +217,9 @@ pub fn pandoc_cite(citekey: &str, filetype: &FileType) -> Result<String, Error> 
         FileType::CommonMark => "commonmark",
         FileType::Markdown => "markdown_strict",
         FileType::RMarkdown => "markdown_strict",
-        FileType::PDF => panic!(),
+        FileType::Pdf => panic!(),
         FileType::LaTeX => "latex",
-        FileType::HTML => "html5",
+        FileType::Html => "html5",
         FileType::Default => "plain",
     };
     let citation = run_command(
