@@ -2,10 +2,10 @@
 
 use pulldown_cmark::{CowStr, Event, Parser, Tag};
 use std::borrow::Cow;
-use std::mem;
 use std::collections::HashMap;
+use std::mem;
 
-use super::{Analyse, Metadata};
+use crate::{Analyse, Metadata};
 
 pub struct CommonMark();
 
@@ -19,22 +19,14 @@ impl Analyse for CommonMark {
     }
 
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
-        let frontmatter = if source.starts_with("---\n") {
-            let post_start = &source["---\n".len()..];
-
+        let frontmatter = source.strip_prefix("---\n").and_then(|post_dashes| {
             // @TODO: simplify this into one loop? Might be less idomatic
-            if let Some(end) = post_start.find("\n---\n") {
-                Some(&post_start[..end])
-            } else if !post_start.is_empty()
-                && &source[source.len() - "\n---".len()..] == "\n---"
-            {
-                Some(&post_start[..post_start.len() - "\n---".len()])
+            if let Some(end) = post_dashes.find("\n---\n") {
+                Some(&post_dashes[..end])
             } else {
-                None
+                source.strip_suffix("\n---")
             }
-        } else {
-            None
-        };
+        });
 
         let mut attributes = HashMap::new();
         for line in frontmatter.unwrap_or("").lines() {
@@ -42,7 +34,6 @@ impl Analyse for CommonMark {
                 let (key, val) = line.split_at(colon_index);
                 attributes.insert(key, val[":".len()..].trim());
             }
-
         }
 
         ////////////////////////////////////////////////////////////////////////
@@ -105,7 +96,11 @@ impl Analyse for CommonMark {
                 }
             }
         }
-        Metadata { outline, links, attributes }
+        Metadata {
+            outline,
+            links,
+            attributes,
+        }
     }
 }
 

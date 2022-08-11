@@ -12,14 +12,16 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use super::{Analyse, Metadata, Walker};
+use crate::{Analyse, Metadata, Walker};
 
 pub struct AsciiDoctor();
 
 // Just a dirty solution that only handles 'link:url.com/[]' type links
 // and handles '== Header' type titles, no escaping, etc.
 impl Analyse for AsciiDoctor {
-    fn comment_prefix(&self) -> &'static str { "//" }
+    fn comment_prefix(&self) -> &'static str {
+        "//"
+    }
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         enum M {
             Text,
@@ -54,25 +56,27 @@ impl Analyse for AsciiDoctor {
                                     walker.peek_until(|c, _| c == '\n');
                                     let val = &source[val_start..walker.post];
                                     attributes.insert(key, val.trim());
-
                                 }
                             }
-                            (c, 'l') if !c.is_alphabetic() && source[curr..].starts_with("link:") => {
+                            (c, 'l')
+                                if !c.is_alphabetic() && source[curr..].starts_with("link:") =>
+                            {
                                 walker.peek_until(|c, _| c == '[' || c.is_whitespace());
                                 let pre_left_square = walker.post;
                                 let uri = &source[curr + "link:".len()..pre_left_square];
 
-
                                 if source[walker.post..].starts_with('[') {
                                     // AsciiDoctor sections break links
                                     // e.g. "link:url[\n\n=Ascii"
-                                    let is_found = walker.peek_until(|c, i| c == ']' || source[i..].starts_with("\n\n="));
+                                    let is_found = walker.peek_until(|c, i| {
+                                        c == ']' || source[i..].starts_with("\n\n=")
+                                    });
                                     if is_found {
-                                        let body = &source[pre_left_square + "[".len()..walker.post];
+                                        let body =
+                                            &source[pre_left_square + "[".len()..walker.post];
                                         links.push((Cow::Borrowed(uri), Cow::Borrowed(body)));
                                     }
                                 }
-
                             }
                             _ => {}
                         }
@@ -91,8 +95,7 @@ impl Analyse for AsciiDoctor {
                     walker.increment_post_by(line_end);
                     outline.push((equal_count as u8, Cow::Borrowed(&rest[..line_end])));
                     state = M::Text;
-                }
-                //_ => {}
+                } //_ => {}
             }
         }
         Metadata {

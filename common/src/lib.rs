@@ -7,10 +7,8 @@ use std::collections::HashMap;
 
 mod walker;
 pub use walker::Walker;
-mod asciidoctor;
-use asciidoctor::AsciiDoctor;
-mod commonmark;
-use commonmark::CommonMark;
+mod filetype;
+use filetype::*;
 mod metadata;
 
 #[derive(Debug)]
