@@ -30,7 +30,7 @@ my $TETRACLI = "../target/debug/tetra-cli";  #
 
 # Things you might want to customise
 my $BLOG___DIR = "$CACHE_DIR/published";  # Source for all blog posts, fed to postify()
-my $OTHER__DIR = "static";                # All other website files, fed to compile()
+my $OTHER__DIR = "files";                 # All other website files, fed to compile()
 my $PUBLIC_DIR = "public";                # Output. Where the webhost should point
 my $POST_RELDIR = "blog";                 # The output for blog posts within $PUBLIC_DIR
 my $DEFAULT_LANG = "en";
@@ -130,10 +130,18 @@ sub build_website {
 sub compile_into_html {
   my ($program, $relpath, $inp_path, $out_path) = @_;
   my $navbar = navbar($relpath, "en");
-  my @params = $#_ >= 4 ? @_[4,] : ();
-  `NAVBAR=\Q$navbar\E DOMAIN=\Q$DOMAIN\E FOOTER=\Q\E \\
-    \Q$program\E \Q@params\E \Q$inp_path\E \\
-  >\Q$out_path\E`;
+
+  system("/bin/sh", "-c",
+    'out="$1"; shift 1
+    export NAVBAR="$1"; export DOMAIN="$2"; export FOOTER="$3"; shift 3
+    "$@" >"$out"',
+    "_", $out_path,
+    $navbar, $DOMAIN, "sitemap",
+    $program, @_[4..$#_], $inp_path,
+  );
+  #`NAVBAR=\Q$navbar\E DOMAIN=\Q$DOMAIN\E FOOTER=\Qsitemap\E \\
+  #  \Q$program\E \Q@params\E \Q$inp_path\E \\
+  #>\Q$out_path\E`;
 }
 
 
@@ -160,7 +168,6 @@ sub build_blog {
     my %langs = map { ref eq 'ARRAY' ? @$_ : $_ } @out_langs;
     my $other_langs = encode_json \%langs;
 
-
     foreach (@inp_langs) {
       my $langify_path = "$CACHE_DIR/langify/$_/$relpath";
       my $lang = $_ eq "ALL" ? $DEFAULT_LANG : $_;
@@ -173,9 +180,10 @@ sub build_blog {
       my $navbar = navbar($out_relpath, $lang);
       my $json_str = `\Q$TETRACLI\E parse-and-json \Q$langify_path\E \Q$parse_path\E`;
 
-      `navbar=\Q$navbar\E \Q$TEMPLATES/website/post.pl\E \\
-        \Q$parse_path\E \Q$DOMAIN\E \Q$lang\E \Q$other_langs\E \Q$json_str\E \\
-      >\Q$PUBLIC_DIR/$out_relpath\E `;
+      compile_into_html("$TEMPLATES/website/post.pl",           # program
+        $out_relpath, $parse_path, "$PUBLIC_DIR/$out_relpath",  # required args
+        $lang, $other_langs, $json_str                          # extra args
+      );
 
       die "Error processing '$BLOG___DIR/$relpath' -> '$PUBLIC_DIR/$out_relpath'"
         if $? != 0;

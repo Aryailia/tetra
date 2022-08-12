@@ -1,0 +1,158 @@
+$LARGE-SCREEN: 768px;
+
+/*******************************************************************************
+ * Grid Structure */
+
+//run: sassc style.scss style.css; echo >>design.html
+//  run: ../make.pl --local --force website
+
+header { grid-area: header; }
+.left  { grid-area: left;   }
+.right { grid-area: right;  }
+main   { grid-area: main;   }
+footer { grid-area: footer; }
+
+.structure-blog {}
+
+//@media screen and (max-width: 765px) {}
+
+@media screen and (min-width: $LARGE-SCREEN) {
+  .structure-blog {
+    display: grid;
+    grid-template-areas:
+      "header     header     header"
+      "left       main       right"
+      "footer     footer     footer";
+    grid-template-columns: minmax(100px, 1fr) 50em minmax(300px, 1fr);
+  }
+
+}
+
+/*******************************************************************************
+ * Navbar all but color - because it is highly custom */
+
+// Having links underlined is best accessibilty for color blind
+// But for navbar, the text are links is obvious by custom (every page is like this)
+nav a { text-decoration: none; }
+header {
+  width: 100%;
+  nav > span {
+    display: inline-block;
+    padding: 0.5rem 40px;
+    text-align: center;
+    vertical-align: center;
+  }
+}
+
+/*******************************************************************************
+ * Fonts, Colors, and Spacing */
+// - https://stubbart.com/computer_consulting/color_themes/color_closest.html
+
+$link-base-color:          blue;
+$link-hover-color:         orange;
+$primary-background-color: WhiteSmoke;
+
+body { color: #222222; }
+@media screen and (max-width: 765px) {
+  .left          { border-bottom: 1px solid grey; }
+  .right, footer { border-top:    1px solid grey; }
+}
+header           { border-bottom: 1px solid grey; }
+
+
+header nav :hover { color: $link-hover-color; }
+body   { background: WhiteSmoke; }
+header { background: White; }
+main   { background: WhiteSmoke; }
+.left  { background: WhiteSmoke; }
+.right { background: White; }
+footer { background: WhiteSmoke; }
+
+
+////////////////////////////////////////////////////////////////////////////////
+body {
+  font-family: Helvetica, Tahoma, Noto, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+main { text-align: justify; }
+pre  { text-align: left; }
+header { position: sticky; top: 0; z-index: 100; }
+@media screen and (min-width: $LARGE-SCREEN) {
+  .structure-blog .right {
+    position: sticky;
+    overflow-y: auto; // Separate scroll from document scroll
+    align-self: start;
+    max-height: 100vh;
+    top: 4rem;
+  }
+}
+
+main, .left, .right, footer { padding: 10px; }
+main, .left, .right         { line-height: 1.6rem; }
+
+@media screen and (min-width: $LARGE-SCREEN) {
+  /* <h1> & <p> have padding top and bottom */
+  //.structure-blog { grid-gap: 20px; }
+  .left  { margin: 20px; }
+  .right { margin: 20px; }
+
+  main   { padding: 0px 20px 0px 20px; }
+  .left  { padding: 10px; }
+  .right { padding: 10px; }
+  footer { padding: 10px; }
+}
+
+pre {
+    white-space: pre-wrap;       /* Since CSS 2.1 */
+    white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+    white-space: -pre-wrap;      /* Opera 4-6 */
+    white-space: -o-pre-wrap;    /* Opera 7 */
+    word-wrap: break-word;       /* Internet Explorer 5.5+ */
+}
+
+/*******************************************************************************
+ * Functional Elements */
+
+.spoiler {
+  .toggle { display: none; }
+
+  .toggle:not(:checked) ~ .start-show, .toggle:not(:checked) ~ * .start-show { display: initial; }
+  .toggle:checked       ~ .start-show, .toggle:checked       ~ * .start-show { display: none; }
+  .toggle:not(:checked) ~ .start-hide, .toggle:not(:checked) ~ * .start-hide { display: none; }
+  .toggle:checked       ~ .start-hide, .toggle:checked       ~ * .start-hide { display: initial; }
+}
+
+.tabs {
+  .tab-head { display: none; }
+  .tab-head:not(:checked) + div { display: none; }
+
+  $tab-border-size: 2px;
+  .tab-label {
+    display: inline-block;
+    padding: 10px 40px;
+    font-weight: bold;
+
+    border-left:          $tab-border-size solid unset;
+    border-top:           $tab-border-size solid unset;
+    border-right:         $tab-border-size solid unset;
+    position:             relative;
+    top:                  $tab-border-size;
+  }
+  .chosen {
+    color:                orange;
+    background-color:     $primary-background-color;
+    border-left:          $tab-border-size solid black;
+    border-top:           $tab-border-size solid black;
+    border-right:         $tab-border-size solid black;
+  }
+
+  .tab-body { border-top: $tab-border-size solid black; }
+
+}
+
+@media screen and (min-width: $LARGE-SCREEN) {
+  /* Mobile first: Hide notices for the big screen */
+  .hide-if-big { display: none; }
+}
+
