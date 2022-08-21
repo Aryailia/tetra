@@ -6,8 +6,7 @@ use utf8;                      # source code in utf8
 use strict 'subs';             # only allows declared functions
 use warnings;
 
-use Cwd 'abs_path', 'cwd';
-use File::Basename 'dirname', 'basename';
+use File::Basename 'basename';
 use File::Find 'find';
 use File::Path 'make_path';
 use JSON;
@@ -17,34 +16,33 @@ binmode STDIN, ':encoding(utf8)';
 binmode STDOUT, ':encoding(utf8)';
 binmode STDERR, ':encoding(utf8)';
 
-chdir dirname($0);
-my $CWD = cwd();
+#run: ../blog.sh --local all
 
 # $MAKE reads from "files/" and "templates/"
-my $MAKE         = "./make.pl";
-my $DEFAULT_LANG = "en";  # Passed to $LANGIFY_EXEC. This sets the directory name of 'ALL'.
-my $CACHE_DIR    = ".cache";
-my $LANGIFY_DATA = "$CACHE_DIR/langify_metadata.json";
-
-my $LANGIFY_EXEC = "../target/debug/langify";
-my $LANG_INP_DIR = "published";
-my $LANG_OUT_DIR = "files/blog";
+my $MAKE         = "./make.sh";
+my $LANG_INP_DIR = $ENV{'PUBLISH_DIR'};
+my $LANG_OUT_DIR = $ENV{'PARSED_DIR'};
 
 $ENV{'DOMAIN'} = 0;
 $ENV{'FORCE'}  = 0;
-#run: perl % all
 
 # We are wrapping the commands that build website with `split_langs()`
 # This is so `$MAKE build` can occur by itself
 my %cmds = (
   "--local" => ["Refer to $MAKE help", sub {
-    $ENV{'DOMAIN'} = 1;
-    `\Q$MAKE\E --local`;  # Just for the print message
+    say STDERR "Set domain for local viewing";
+    $ENV{'LOCAL'} = 1;  # Signal to 'make.pl'
   }],
-  "--force" => ["Refer to $MAKE help", sub { $ENV{'FORCE'}  = 1; }],
-  "langify" => ["Applies langify on files in $LANG_INP_DIR", sub { split_langs() }],
-  "website" => ["Refer to $MAKE help", sub {
+  "--force" => ["Refer to $MAKE help", sub {
+    say STDERR "Always compile without checking last modified date";
+    $ENV{'FORCE'} = 1;  # Signal to 'make.pl'
+  }],
+  "langify" => ["Applies langify on files in $LANG_INP_DIR", sub {
+    say STDERR "Splitting the posts in '$LANG_INP_DIR' to cache";
     split_langs();
+  }],
+  "website" => ["Refer to $MAKE help", sub {
+    my_make('langify');
     `\Q$MAKE\E website`;
   }],
   "all" => ["Clean and build everything", sub {
@@ -54,7 +52,7 @@ my %cmds = (
 
 sub split_langs() {
   my $dir = $LANG_INP_DIR;
-  make_path($CACHE_DIR);
+  make_path($ENV{'CACHE_DIR'});
 
   my @files;
   find({
@@ -73,19 +71,18 @@ sub split_langs() {
 
   my %metadata;
   foreach my $p (@files) {
-    my $lang_str = `\Q$LANGIFY_EXEC\E \\
+    my $lang_str = `\Q$ENV{'LANGIFY_EXEC'}\E \\
       <\Q$dir/$p\E \\
-      --default-lang \Q$DEFAULT_LANG\E \\
+      --default-lang \Q$ENV{'DEFAULT_LANG'}\E \\
       \Q$LANG_OUT_DIR\E \Q$p\E`;
     my @lang_list = split /\s/, $lang_str;
     $metadata{$p} = \@lang_list;
   }
 
   my $json = encode_json \%metadata;
-  open FH, '>', "$LANGIFY_DATA";
+  open FH, '>', "$ENV{'LANGIFY_DATA'}";
   print FH $json;
   close FH;
-  #say `<\Q$LANGIFY_DATA\E jq '.'`;
 }
 
 sub my_make {

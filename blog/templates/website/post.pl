@@ -18,20 +18,12 @@ binmode STDERR, ':encoding(utf8)';
 
 #my $json = JSON->new->utf8->decode(<STDIN>);
 
-#run: ../../blog.pl --local all
-
-my $LANGIFY_JSONFILE = ".cache/langify_metadata.json";  # @TODO: read from an environment variable
-my $PARSED_JSONFILE  = ".cache/parsed_partial.partialjson";
-my $TETRACLI     = "../target/debug/tetra-cli";
-my $CACHE_DIR    = ".cache";
-my $PARSED_DIR   = "$CACHE_DIR/parsed";
-my $PUBLIC_DIR   = "public";
+#run: ../../blog.sh --local all
 
 sub parse {
   my ($relpath, $input_path) = @_;
-  make_path(dirname("$PARSED_DIR/$relpath"));
 
-  open LJ, "<", $LANGIFY_JSONFILE;
+  open LJ, "<", $ENV{'LANGIFY_DATA'};
   my $langify_data = decode_json <LJ>;
   close LJ;
 
@@ -39,25 +31,25 @@ sub parse {
   if ($relpath =~ m|^blog/(?:(.*)/)?([^/]+)/([^/]+)$|) {
     $post_reldir = defined $1 ? "blog/$1" : "blog";
     my $key = defined $1 ? "$1/$3" : $3;
-    $lang_list = $langify_data->{$key} or die "Could not find '$key' in '$LANGIFY_JSONFILE'";
+    $lang_list = $langify_data->{$key} or die "Could not find '$key' in '$ENV{'LANGIFY_DATA'}'";
     $lang = $2;
   } else {
     die "DEV: Blog post not in the expected file path format";
   }
 
+  make_path(dirname("$ENV{'PARSED_DIR'}/$relpath"));
+  my $parsed_path = "$ENV{'PARSED_DIR'}/$relpath";
+  my $json_str = `\Q$ENV{'TETRACLI'}\E parse-and-json \Q$input_path\E \Q$parsed_path\E`;
 
-  my $parsed_path = "$PARSED_DIR/$relpath";
-  my $json_str = `\Q$TETRACLI\E parse-and-json \Q$input_path\E \Q$parsed_path\E`;
-
-  open PJ, ">>", $PARSED_JSONFILE;
+  open PJ, ">>", $ENV{'PARSED_PARTIAL'};
   print PJ ",$json_str";
   close PJ;
 
-  return ($input_path, $post_reldir, $lang, $lang_list, $json_str);
+  return ($input_path, $lang, $lang_list, $json_str);
 }
 
 sub main {
-  my ($input_path, $post_reldir, $lang, $lang_list, $json_str) = parse @ARGV;
+  my ($input_path, $lang, $lang_list, $json_str) = parse @ARGV;
 
   my $json = decode_json($json_str);
   my %attributes = %{$json->{"attributes"}};
@@ -97,6 +89,7 @@ EOF
 
 ################################################################################
 # Left - Languages and Series
+my $post_reldir = "$ENV{'DOMAIN'}/$ENV{'POST_RELDIR'}";
 foreach my $l (@$lang_list) {
   say qq{    <a href="$post_reldir/$l/$stem.html">$l</a>} if $l ne $lang;
 }

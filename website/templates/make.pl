@@ -17,41 +17,24 @@ binmode STDIN, ':encoding(utf8)';
 binmode STDOUT, ':encoding(utf8)';
 binmode STDERR, ':encoding(utf8)';
 
-chdir dirname($0);
-my $cwd = cwd();
-
 # Things you probably do not want to customise
-my $TEMPLATES = "templates";                 #
-my $CACHE_DIR = ".cache";                    #
-my $DOMAIN = "";  # The base for links, different for file:// and web hosting
 my $FORCE = 0;                               # @TODO
-my $LANGIFY = "../target/debug/langify";     # Splits by lang
-my $TETRACLI = "../target/debug/tetra-cli";  #
 
-# Things you might want to customise
-my $BLOG___DIR = "$CACHE_DIR/published";  # Source for all blog posts, fed to postify()
-my $OTHER__DIR = "files";                 # All other website files, fed to compile()
-my $PUBLIC_DIR = "public";                # Output. Where the webhost should point
-my $POST_RELDIR = "blog";                 # The output for blog posts within $PUBLIC_DIR
-my $DEFAULT_LANG = "en";
-
-
-
-#run: perl % --local all
+#run: ../make.sh --local all
 my %cmds = (
   "--local" => ["Set \$DOMAIN to for local links", sub {
-    say STDERR "", "Set domain for local viewing";
-    $DOMAIN = "$cwd/$PUBLIC_DIR";
+    say STDERR "Set domain for local viewing" if not exists $ENV{'LOCAL'};
+    $ENV{'DOMAIN'} = cwd() . "/$ENV{'PUBLIC_DIR'}";
   }],
   "--force" => ["Ignores checking if source file is newer than target file", sub {
-    say STDERR "", "Always compiling";
+    say STDERR "Always compile without checking last modified date" if not exists $ENV{'FORCE'};
     $FORCE = 1;
   }],
 
   "clean" => ["Removes \$PUBLIC_DIR", sub {
-    say STDERR "Removing public dir (WIP on cache too)...";
-    `rm -r \Q$CACHE_DIR\E` if -d $CACHE_DIR;
-    `rm -r \Q$PUBLIC_DIR\E` if -d $PUBLIC_DIR;
+    say STDERR "Removing cache and public dir...";
+    `rm -r \Q$ENV{'CACHE_DIR'}\E` if -d $ENV{'CACHE_DIR'};
+    `rm -r \Q$ENV{'PUBLIC_DIR'}\E` if -d $ENV{'PUBLIC_DIR'};
   }],
 
   "build" => ["Build langify and tetra-cli, the rust projects", sub {
@@ -66,19 +49,23 @@ my %cmds = (
   }],
 );
 
+# Special case for '../blog'
+# Since 'blog.pl' executes commands one by one, the environment does not carry
+# over, thus we have to set this explicitly given an environment variable
+# set in 'blog.sh'
 $cmds{'--force'}[1]() if exists $ENV{'FORCE'} and $ENV{'FORCE'};
-$cmds{'--local'}[1]() if exists $ENV{'DOMAIN'} and $ENV{'DOMAIN'};
+$cmds{'--local'}[1]() if exists $ENV{'LOCAL'} and $ENV{'LOCAL'};
 
 ################################################################################
 sub build_website {
   say STDERR "Compiling the website...";
-  my @files = enumerate_files_as_relpaths($OTHER__DIR);
+  my @files = enumerate_files_as_relpaths($ENV{'SOURCE_DIR'});
 
   my ($good, $bad, $skip) = (0, 0, 0);
 
   foreach my $relpath (@files) {
-    my $inp_path = "$OTHER__DIR/$relpath";
-    my $out_path = "$PUBLIC_DIR/$relpath";
+    my $inp_path = "$ENV{'SOURCE_DIR'}/$relpath";
+    my $out_path = "$ENV{'PUBLIC_DIR'}/$relpath";
     "/$relpath" =~ /^.*\/.+\.(.+?)$/;  # For some reason non-greedy not working
     my $ext = lc($1);
     my $out_relstem = substr($out_path, 0, -length($ext) - 1);
@@ -96,7 +83,7 @@ sub build_website {
 
     } elsif ($ext eq "html") {
       if (is_left_newer($inp_path, "$out_relstem.html")) {
-        compile_into_html($TETRACLI, $relpath, $inp_path, "$out_relstem.html", "parse");
+        compile_into_html($ENV{'TETRACLI'}, $relpath, $inp_path, "$out_relstem.html", "parse");
         $? == 0 ? ($good += 1) : ($bad += 1);
       } else {
         $skip += 1;
@@ -119,7 +106,7 @@ sub build_website {
       }
 
     } elsif ($ext eq "adoc" || $ext eq "md") {
-      compile_into_html("$TEMPLATES/website/post.pl",  # program
+      compile_into_html("$ENV{'TEMPLATES'}/website/post.pl",  # program
         $relpath, $inp_path, "$out_relstem.html",      # required args
         $relpath,                                      # extra args to pass to 'post.pl'
       );
@@ -139,27 +126,20 @@ sub build_website {
 
 sub compile_into_html {
   my ($program, $relpath, $inp_path, $out_path) = @_;
-  my $navbar = navbar($relpath, "en");
-  my $footer = "sitemap";
-
-  system("/bin/sh", "-c",
-    'out="$1"; shift 1
-    export NAVBAR="$1"; export DOMAIN="$2"; export FOOTER="$3"; shift 3
-    "$@" >"$out"',
+  $ENV{'NAVBAR'} = navbar($relpath, "en");
+  $ENV{'FOOTER'} = "sitemap";
+  #also pass $ENV{'DOMAIN'};
+  system("/bin/sh", "-c", 'out="$1"; shift 1; "$@" >"${out}"',
     "_", $out_path,
-    $navbar, $DOMAIN, $footer,
     $program, @_[4..$#_], $inp_path,
   );
-  #`NAVBAR=\Q$navbar\E DOMAIN=\Q$DOMAIN\E FOOTER=\Qsitemap\E \\
-  #  \Q$program\E \Q@params\E \Q$inp_path\E \\
-  #>\Q$out_path\E`;
 }
 
 
 ################################################################################
 sub navbar {
   my ($relpath, $lang) = @_;
-  return `\Q$TEMPLATES/website/navbar.sh\E \Q$DOMAIN\E \Q$relpath\E \Q$lang\E`;
+  return `\Q$ENV{'TEMPLATES'}/website/navbar.sh\E \Q$relpath\E \Q$lang\E`;
 }
 
 sub is_left_newer {
