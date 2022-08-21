@@ -232,10 +232,10 @@ sub enumerate_files_as_relpaths {
 
 
 sub my_make {
-  if ($#_  == 0) {
+  if ($#_  == -1) {
     help();
   } else {
-    foreach (sort @_) {
+    foreach (@_) {
       if (exists($cmds{$_})) {
         $cmds{$_}[1]();
       } else {
