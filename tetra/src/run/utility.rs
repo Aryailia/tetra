@@ -4,7 +4,7 @@
 
 //run: cargo test -- --nocapture
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::io::Write;
 use std::process;
 use std::process::Stdio;
@@ -58,36 +58,33 @@ fn recursive_concat<'a, V>(args: &[Value<'a, V>], buffer: &mut String) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// code
-pub fn code<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
+// shell
+pub fn shell<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
     //let lang = unwrap!(or_invalid args[0] => Value::Text(x) => x);
-    let lang: &str = match &args[0] {
+    let cmd: &str = match &args[0] {
         Value::Text(x) => x,
         _ => return Err(Error::Arg(0, "Invalid type".into())),
     };
-    let cell_body: &str = match &args[1] {
-        Value::Text(x) => x,
-        _ => return Err(Error::Arg(1, "Invalid type".into())),
-    };
-
-    match lang {
-        "r" => {
-            println!("markup.rs: Running r");
-        }
-        "graphviz" | "dot" => {
-            return run_command("dot", Some(cell_body), &["-Tsvg"], None)
-                .map(Cow::Owned)
-                .map(Value::Text)
-        }
-        "sh" => {
-            return run_command("sh", Some(cell_body), &["-s"], None)
-                .map(Cow::Owned)
-                .map(Value::Text)
-        }
-        s => todo!("markup.rs: {}", s),
+    let last_index = args.len() - 1;
+    if last_index == 0 {
+        Err(Error::Generic(Cow::Borrowed("Missing second argument that will be used for STDIN")))
+    } else {
+        let cell_body: &str = match &args[last_index] {
+            Value::Text(x) => x,
+            _ => return Err(Error::Arg(last_index, "Invalid type".into())),
+        };
+        let mut args: Vec<&str> = args[1..last_index]
+            .iter()
+            .enumerate()
+            .map(|(i, a)| match a{
+                Value::Text(x) => Ok(x.borrow()),
+                _ => return Err(Error::Arg(i, "Invalid type. Expected text.".into())),
+            })
+            .collect::<Result<Vec<&str>, Error>>()?;
+        run_command(cmd, Some(cell_body), &args, None)
+            .map(Cow::Owned)
+            .map(Value::Text)
     }
-
-    Ok(Value::Text(Cow::Borrowed("")))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -120,6 +117,7 @@ pub fn run_command(
         let mut child = process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
 
@@ -135,11 +133,12 @@ pub fn run_command(
     };
     let output = child.wait_with_output().unwrap();
 
-    let out = String::from_utf8(output.stdout).unwrap();
     if output.status.success() {
-        Ok(out)
+        println!("{:?}", String::from_utf8(output.stderr));
+        Ok(String::from_utf8(output.stdout).unwrap())
     } else {
-        panic!()
+        Err(Error::Generic(Cow::Owned(format!("Non zero status: {}\n{}", "?", String::from_utf8(output.stderr).unwrap()))))
+        //panic!("NonZeroStatus {}", )
         //Err(CustomErr::NonZeroStatus(
         //    output.status.code().unwrap_or(1),
         //    out,

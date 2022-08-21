@@ -65,7 +65,7 @@ mod tests {
         PAREN,   // 3, checks if "cite(" vs "cite (" etc. work
     ];
 
-    #[test]
+    //#[test]
     #[allow(dead_code, unreachable_code)]
     fn it_works() {
         let file = _EG[0]; //r#"{$ cite "@margulis2004", env: bib $}"#;
@@ -129,7 +129,7 @@ mod tests {
     }
 
     //{{$ cite("a", cite "2", "三") $}}
-
+    // @TODO: `{$ run "dot", "-Tsvg", body | concat . $}` infinite loops, no longer a lexer error
     pub const GENERAL: &str = r#"
 :title: Hello
 {| ; hello = env "HOME"; concat(":author:       ", hello, .) |}
@@ -137,14 +137,19 @@ mod tests {
 :bibliography: {$ env "BIBLIOGRAPHY" $}
 {# Comment  #}
 
-++++
-{| run "graphviz" | concat . |}
+```{| body = | concat . |}
 digraph {
   A -> B
   A -> C
-  {$ concat "nodes" $}
 }
-{| end |}
+{| end |}```
+
+++++
+{$ highlight "graphviz", body $}
+++++
+
+++++
+{$ run "dot", "-Tsvg", body $}
 ++++
 
 == Lorem
@@ -333,34 +338,39 @@ mod sexpr_tests {
             12: Ident "env"| Reference(11) "",
             13: Concat ""| Str "\n:home:         ", Reference(10) "",
                            Str "\n:bibliography: ", Reference(12) "", Str "\n",
-                           Str "\n\n++++\n",
-            14: Concat ""| Str "graphviz",
-            15: Ident "run"| Reference(14) "", Stdin "{|",
-            16: Ident "concat"| Stdin ".", Reference(15) "",
-            17: Concat ""| Str "nodes",
-            18: Ident "concat"| Reference(17) "",
-            19: Concat ""| Str "\ndigraph {\n  A -> B\n  A -> C\n  ",
-                           Reference(18) "", Str "\n}\n",
-            20: Ident "end"| Stdin "{|",
-            21: Concat ""| Str "This is a quote that", Literal("\n") "\\n",
+                           Str "\n\n```",
+            14: Assign "="| Ident "body", Stdin "{|",
+            15: Ident "concat"| Stdin ".", Reference(14) "",
+            16: Concat ""| Str "\ndigraph {\n  A -> B\n  A -> C\n}\n",
+            17: Ident "end"| Stdin "{|",
+            18: Concat ""| Str "graphviz",
+            19: Ident "body"|
+            20: Ident "highlight"| Reference(18) "", Reference(19) "",
+            21: Concat ""| Str "dot",
+            22: Concat ""| Str "-Tsvg",
+            23: Ident "body"|
+            24: Ident "run"| Reference(21) "", Reference(22) "", Reference(23) "",
+            25: Concat ""| Str "This is a quote that", Literal("\n") "\\n",
                            Str "should be included",
-            22: Concat ""| Reference(21) "",
-            23: Concat ""| Str "\n++++\n\n== Lorem\nSome text\n\n",
-                           Reference(22) "", Str "\n\n",
-            24: Concat ""| Literal("") "\"\"",
-            25: Ident "hello"|
-            26: Func "if_equals"| Reference(25) "", Reference(24) "", Stdin "{|",
-            27: Concat ""| Reference(26) "",
-            28: Concat ""| Str "\nCome to the dark side of the moon\n",
-            29: Ident "end"| Stdin "{|",
-            30: Concat ""| Str "a",
-            31: Ident "hello"|
-            32: Ident "hello"|
-            33: Func "concat"| Reference(31) "", Reference(32) "", Reference(30) "",
-            34: Concat ""| Reference(33) "",
-            35: Concat ""| Str "\n\nThis should not show up in the output\n",
-            36: Concat ""| Reference(0) "", Reference(9) "", Reference(16) "",
-                           Reference(20) "", Reference(27) "", Reference(34) "",
+            26: Concat ""| Reference(25) "",
+            27: Concat ""| Str "```\n\n++++\n", Reference(20) "",
+                           Str "\n++++\n\n++++\n", Reference(24) "",
+                           Str "\n++++\n\n== Lorem\nSome text\n\n",
+                           Reference(26) "", Str "\n\n",
+            28: Concat ""| Literal("") "\"\"",
+            29: Ident "hello"|
+            30: Func "if_equals"| Reference(29) "", Reference(28) "", Stdin "{|",
+            31: Concat ""| Reference(30) "",
+            32: Concat ""| Str "\nCome to the dark side of the moon\n",
+            33: Ident "end"| Stdin "{|",
+            34: Concat ""| Str "a",
+            35: Ident "hello"|
+            36: Ident "hello"|
+            37: Func "concat"| Reference(35) "", Reference(36) "", Reference(34) "",
+            38: Concat ""| Reference(37) "",
+            39: Concat ""| Str "\n\nThis should not show up in the output\n",
+            40: Concat ""| Reference(0) "", Reference(9) "", Reference(15) "",
+                           Reference(17) "", Reference(31) "", Reference(38) "",
         );
     }
 

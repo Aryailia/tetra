@@ -14,7 +14,7 @@ use common::FileType;
 use crate::run::{Bindings, Dirty, Error, PureResult, StatefulResult};
 use crate::run::{Value, Variables};
 
-use crate::run::utility::{code, concat, env};
+use crate::run::utility::{shell, concat, env};
 use crate::run::utility::{fetch_env_var, run_command};
 use crate::run::value as v;
 use crate::run::{LIMITED, UNLIMITED}; // these are just bools
@@ -39,8 +39,8 @@ pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
     ctx.register_pure_function("include", &include, UNLIMITED, &[v::TEXT]);
 
     // "r/run <lang> <code-body>"
-    ctx.register_pure_function("run", &code, LIMITED, &[v::TEXT, v::TEXT]);
-    ctx.register_pure_function("r", &code, LIMITED, &[v::TEXT, v::TEXT]);
+    ctx.register_pure_function("run", &shell, UNLIMITED, &[v::TEXT, v::TEXT]);
+    //ctx.register_pure_function("r", &shell, LIMITED, &[v::TEXT, v::TEXT]);
     ctx.register_pure_function(
         "if_equals",
         &if_eq_statement,
@@ -60,6 +60,8 @@ pub fn default_context<'a>() -> Bindings<'a, CustomKey, CustomValue> {
         &[v::TEXT, v::TEXT, v::TEXT, v::TEXT],
     );
 
+    ctx.register_pure_function("syntax_highlight", &syntax_highlight, LIMITED, &[v::TEXT, v::TEXT]);
+    ctx.register_pure_function("highlight",        &syntax_highlight, LIMITED, &[v::TEXT, v::TEXT]);
     ctx.register_pure_function("concat", &concat, UNLIMITED, &[]);
     ctx.register_pure_function("end", &concat, LIMITED, &[v::TEXT]);
     ctx.register_stateful_function("cite", &cite, LIMITED, &[v::TEXT]);
@@ -241,6 +243,28 @@ pub fn pandoc_cite(citekey: &str, filetype: &FileType) -> Result<String, Error> 
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Syntax highlight
+pub fn syntax_highlight<'a, V>(args: &[Value<'a, V>], api: Api<'a>) -> PureResult<'a, V> {
+    let lang: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
+    let code: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
+    let output_format = match &api.meta.output_filetype {
+        FileType::AsciiDoctor => "html",
+        FileType::CommonMark => "html",
+        FileType::Markdown => "html",
+        FileType::RMarkdown => "html",
+        FileType::Pdf => panic!(),
+        FileType::LaTeX => "latex",
+        FileType::Html => "html",
+        FileType::Default => "html",
+    };
+    let output = run_command("pygmentize", Some(code), &[
+        "-l", lang,
+        "-f", output_format,
+    ], None)?;
+
+    Ok(Value::Text(Cow::Owned(output)))
+}
+
 // includes other files into the current file
 // @TODO: add ability to parse those files as well
 pub fn include<'a, V>(args: &[Value<'a, V>], _api: Api<'a>) -> PureResult<'a, V> {
@@ -275,7 +299,7 @@ pub fn run_if_equals<'a, V>(args: &[Value<'a, V>], api: Api<'a>) -> PureResult<'
     let lvalue: &str = unwrap!(unreachable &args[0] => Value::Text(s) => s);
     let rvalue: &str = unwrap!(unreachable &args[1] => Value::Text(s) => s);
     if lvalue == rvalue {
-        Ok(code(&args[2..], api)?)
+        Ok(shell(&args[2..], api)?)
     } else {
         Ok(Value::Text(Cow::Borrowed("")))
     }
