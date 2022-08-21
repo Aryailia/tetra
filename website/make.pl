@@ -24,7 +24,7 @@ my $cwd = cwd();
 my $TEMPLATES = "templates";                 #
 my $CACHE_DIR = ".cache";                    #
 my $DOMAIN = "";  # The base for links, different for file:// and web hosting
-my $FORCE = 0;                               #
+my $FORCE = 0;                               # @TODO
 my $LANGIFY = "../target/debug/langify";     # Splits by lang
 my $TETRACLI = "../target/debug/tetra-cli";  #
 
@@ -37,7 +37,7 @@ my $DEFAULT_LANG = "en";
 
 
 
-#run: perl % clean --local compile
+#run: perl % --local all
 my %cmds = (
   "--local" => ["Set \$DOMAIN to for local links", sub {
     say STDERR "", "Set domain for local viewing";
@@ -50,6 +50,7 @@ my %cmds = (
 
   "clean" => ["Removes \$PUBLIC_DIR", sub {
     say STDERR "Removing public dir (WIP on cache too)...";
+    `rm -r \Q$CACHE_DIR\E` if -d $CACHE_DIR;
     `rm -r \Q$PUBLIC_DIR\E` if -d $PUBLIC_DIR;
   }],
 
@@ -58,17 +59,15 @@ my %cmds = (
     `cargo build --manifest-path "../Cargo.toml"`
   }],
 
-  "blog" => ["Build the blog posts", sub { build_blog() }],
-
   "website" => ["Clean and build everything", sub { build_website() }],
-  "compile" => ["Build everything but rust", sub {
-    my_make("website", "blog");
-  }],
 
   "all" => ["Clean and build everything", sub {
-    my_make("clean", "build", "compile");
+    my_make("clean", "build", "website");
   }],
 );
+
+$cmds{'--force'}[1]() if exists $ENV{'FORCE'} and $ENV{'FORCE'};
+$cmds{'--local'}[1]() if exists $ENV{'DOMAIN'} and $ENV{'DOMAIN'};
 
 ################################################################################
 sub build_website {
@@ -81,39 +80,50 @@ sub build_website {
     my $inp_path = "$OTHER__DIR/$relpath";
     my $out_path = "$PUBLIC_DIR/$relpath";
     "/$relpath" =~ /^.*\/.+\.(.+?)$/;  # For some reason non-greedy not working
-    my $ext = $1;
-    my $out_stem = substr($out_path, 0, -length($ext) - 1);
-    make_path dirname("$out_path");
+    my $ext = lc($1);
+    my $out_relstem = substr($out_path, 0, -length($ext) - 1);
+    make_path(dirname("$out_path"));
 
-    if (-l $inp_path) {
+    if (-l $inp_path && -d $inp_path) {
       my $abs_path = abs_path($inp_path);
       unlink $out_path;  # delete file
       `ln -s \Q$abs_path\E \Q$out_path\E`;
       $? == 0 ? ($good += 1) : ($bad += 1);
 
+    } elsif ($ext =~ /svg|png|gif|jpe?g/) {
+      `cp \Q$inp_path\E \Q$out_path\E`;
+      $? == 0 ? ($good += 1) : ($bad += 1);
+
     } elsif ($ext eq "html") {
-      if (is_left_newer($inp_path, "$out_stem.html")) {
-        compile_into_html($TETRACLI, $relpath, $inp_path, "$out_stem.html", "parse");
+      if (is_left_newer($inp_path, "$out_relstem.html")) {
+        compile_into_html($TETRACLI, $relpath, $inp_path, "$out_relstem.html", "parse");
         $? == 0 ? ($good += 1) : ($bad += 1);
       } else {
         $skip += 1;
       }
 
     } elsif ($ext eq "sh") {
-      if (is_left_newer($inp_path, "$out_stem.html")) {
-        compile_into_html("/bin/sh", $relpath, $inp_path, "$out_stem.html");
+      if (is_left_newer($inp_path, "$out_relstem.html")) {
+        compile_into_html("/bin/sh", $relpath, $inp_path, "$out_relstem.html");
         $? == 0 ? ($good += 1) : ($bad += 1);
       } else {
         $skip += 1;
       }
 
     } elsif ($ext eq "scss") {
-      if (is_left_newer($inp_path, "$out_stem.css")) {
-        `sassc \Q$inp_path\E \Q$out_stem.css\E`;
+      if (is_left_newer($inp_path, "$out_relstem.css")) {
+        `sassc \Q$inp_path\E \Q$out_relstem.css\E`;
         $? == 0 ? ($good += 1) : ($bad += 1);
       } else {
         $skip += 1;
       }
+
+    } elsif ($ext eq "adoc" || $ext eq "md") {
+      compile_into_html("$TEMPLATES/website/post.pl",  # program
+        $relpath, $inp_path, "$out_relstem.html",      # required args
+        $relpath,                                      # extra args to pass to 'post.pl'
+      );
+      $? == 0 ? ($good += 1) : ($bad += 1);
 
     } else {
       say STDERR "No handle for processing: $inp_path";
@@ -130,71 +140,19 @@ sub build_website {
 sub compile_into_html {
   my ($program, $relpath, $inp_path, $out_path) = @_;
   my $navbar = navbar($relpath, "en");
+  my $footer = "sitemap";
 
   system("/bin/sh", "-c",
     'out="$1"; shift 1
     export NAVBAR="$1"; export DOMAIN="$2"; export FOOTER="$3"; shift 3
     "$@" >"$out"',
     "_", $out_path,
-    $navbar, $DOMAIN, "sitemap",
+    $navbar, $DOMAIN, $footer,
     $program, @_[4..$#_], $inp_path,
   );
   #`NAVBAR=\Q$navbar\E DOMAIN=\Q$DOMAIN\E FOOTER=\Qsitemap\E \\
   #  \Q$program\E \Q@params\E \Q$inp_path\E \\
   #>\Q$out_path\E`;
-}
-
-
-sub build_blog {
-  say STDERR "Compiling the posts...";
-  my @files = enumerate_files_as_relpaths($BLOG___DIR);
-  my ($good, $skip) = (0, 0);
-
-  foreach my $relpath (@files) {
-    my $inp_path = "$BLOG___DIR/$relpath";
-    my $relstem = $relpath; $relstem =~ s/\.([^.]+)$//;
-
-    if (not is_left_newer($inp_path, "$PUBLIC_DIR/$POST_RELDIR/en/$relstem.html")) {
-      $skip += 1;
-      next
-    }
-
-    my $lang_str = `<\Q$BLOG___DIR/$relpath\E \\
-      \Q$LANGIFY\E \Q$CACHE_DIR/langify\E \Q$relpath\E
-    `;
-    my @inp_langs = split /\s+/, $lang_str;
-    my @out_langs = map { $_ eq "ALL" ? $DEFAULT_LANG : $_ } @inp_langs;
-    @out_langs = map { [$_, "$POST_RELDIR/$_/$relpath"] } @out_langs;
-    my %langs = map { ref eq 'ARRAY' ? @$_ : $_ } @out_langs;
-    my $other_langs = encode_json \%langs;
-
-    foreach (@inp_langs) {
-      my $langify_path = "$CACHE_DIR/langify/$_/$relpath";
-      my $lang = $_ eq "ALL" ? $DEFAULT_LANG : $_;
-      my $parse_path = "$CACHE_DIR/parsed/$lang/$relpath";
-      my $out_relpath = "$POST_RELDIR/$lang/$relstem.html";
-
-      make_path(dirname($parse_path));
-      make_path(dirname("$PUBLIC_DIR/$out_relpath"));
-
-      my $navbar = navbar($out_relpath, $lang);
-      my $json_str = `\Q$TETRACLI\E parse-and-json \Q$langify_path\E \Q$parse_path\E`;
-
-      compile_into_html("$TEMPLATES/website/post.pl",           # program
-        $out_relpath, $parse_path, "$PUBLIC_DIR/$out_relpath",  # required args
-        $lang, $other_langs, $json_str                          # extra args
-      );
-
-      die "Error processing '$BLOG___DIR/$relpath' -> '$PUBLIC_DIR/$out_relpath'"
-        if $? != 0;
-
-      $good += 1;
-    }
-  }
-
-  say STDERR "Processed ", $#files + 1, " file(s)";
-  say STDERR "  Successfully created $good output file(s)";
-  say STDERR "  Skipped              $skip source file(s)";
 }
 
 

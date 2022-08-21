@@ -13,39 +13,25 @@ binmode STDIN, ':encoding(utf8)';
 binmode STDOUT, ':encoding(utf8)';
 binmode STDERR, ':encoding(utf8)';
 
-
-#my $stdin = <STDIN>;
-#say $stdin;
 #my $json = JSON->new->utf8->decode(<STDIN>);
-#say $json->{"outline"}->[2][0];
 
-my $templates_dir = "";
-my ($lang, $other_langs, $json_str, $input_path) = @ARGV;
-my $json = decode_json($json_str);
-my %attributes = %{$json->{"attributes"}};
+my ($relpath, $input_path) = @ARGV;
 
 basename($input_path) =~ /\.(.+?)$/;
 my $ext = lc($1);
-
-# read from JSON
-my $title        = ($attributes{"title"} or "");
-my $author       = ($attributes{"author"} or "");
-my $date_created = ($attributes{"date-created"} or ""); $date_created =~ s/ \d\d?:.*$//;
-my $date_updated = ($attributes{"date-updated"} or ""); $date_updated =~ s/ \d\d?:.*$//;
 
 #run: ../../make.pl --local --force compile
 
 sub main {
 print(<<EOF);
 <!DOCTYPE html>
-<html lang="$lang">
+<htmllang="en">
 <head>
   <meta charset="UTF-8>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
   <link rel="stylesheet" href="$ENV{"DOMAIN"}/style.css">
-  <title>$title</title>
-
+  <title>Nondescript Title</title>
   <!--<script type="text/javascript"></script>
   <script type="text/javascript" src="src/app.js"></script>
   -->
@@ -56,25 +42,9 @@ print(<<EOF);
 $ENV{"NAVBAR"}
   </header>
   <aside class="left">
-    <div>Created: ${date_created}</div>
-EOF
-
-################################################################################
-# Left - Languages and Series
-my %lang_pathmap = %{decode_json($other_langs)};
-foreach my $l (keys %lang_pathmap) {
-  say qq{    <a href="$lang_pathmap{$l}">$l</a>} if $l ne $lang;
-}
-
-
-################################################################################
-# Main
-print(<<EOF);
   </aside>
   <main class="tabs">
 @{[tab_bar_two_div(1, "checked")]}
-    <h1>${title}</h1>
-    <div>Last Updated: ${date_updated}</div>
 EOF
 if ($ext eq "adoc") {
   system("asciidoctor", $input_path, "--out-file", "-",
@@ -90,43 +60,18 @@ print(<<EOF);
       </div>
     </div>
 @{[tab_bar_two_div(2, "")]}
-        <pre><code>
+        <pre>
 @{[`cat \Q$input_path\E`]}
-        </code></pre>
+        </pre>
       </div>
     </div>
   </main>
-EOF
-
-
-
-################################################################################
-# Right - Table of Contents
-print(<<EOF);
   <aside class="right">
     <div>
       <b>Table of Contents</b>
       <div class="start-hide">
-<ul>
-EOF
-
-my $curr = 1;
-
-for  (@{$json->{"outline"}}) {
-  my ($level, $heading) = @$_;
-  #say STDERR $level, $heading;
-  if ($level > $curr) {
-    say "<ul>"
-  } elsif ($level < $curr) {
-    say "</ul>"
-  }
-  say "<li>$heading</li>";
-  $curr = $level;
-}
-say "</ul>" if $curr > 1;
-
-print(<<EOF);
-</ul>
+        left aside bar
+      </div>
     </div>
   </aside>
   <footer>

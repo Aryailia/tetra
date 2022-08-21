@@ -20,6 +20,10 @@ mod flags {
             /// Output filename. Takes the file extension for comment from here
             required filename: String
         {
+            /// If no language (or just 'ALL') is specified for a file, set what
+            /// value it should default. If this flag is not specified, it
+            /// defaults to 'en' for English.
+            optional -d, --default-lang default_lang: String
         }
     }
 }
@@ -33,11 +37,20 @@ fn main() {
                 .map(|i| &args.filename[i + ".".len()..])
                 .unwrap_or("");
 
-            let comment_str = FileType::from(extension).comment_prefix();
+            let comment_str = FileType::from(extension)
+                .unwrap_or(FileType::Default)
+                .comment_prefix();
+            let default_lang = args.default_lang.as_ref().map(String::as_str).unwrap_or("en");
+
             let mut input = String::new();
             log(path::Path::new("STDIN"), io::stdin().read_to_string(&mut input));
 
             for (lang, string) in parse(&input, comment_str, " api_set_lang:") {
+                let lang = if lang == "ALL" {
+                    default_lang
+                } else {
+                    lang
+                };
                 args.output_dir.push(lang);
                 log(&args.output_dir, fs::create_dir_all(&args.output_dir));
 
