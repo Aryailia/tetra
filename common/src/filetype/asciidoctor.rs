@@ -85,6 +85,8 @@ impl Analyse for AsciiDoctor {
                     }
                     break;
                 }
+
+                // AsciiDoctor reserves <h1>, i.e. '=' for title
                 M::Header => {
                     walker.peek_until(|c, _| c != '=');
                     let equal_count = walker.post - start; //+ 1;
@@ -92,8 +94,11 @@ impl Analyse for AsciiDoctor {
 
                     let line_end = rest.find('\n').unwrap_or(rest.len());
                     //walker.peek_until(|c, _| c == '\n');
-                    walker.increment_post_by(line_end);
-                    outline.push((equal_count as u8, Cow::Borrowed(&rest[..line_end])));
+                    // "====\na\n====\n" is a block quote
+                    if !(equal_count == 3 && rest[..line_end].is_empty()) {
+                        walker.increment_post_by(line_end);
+                        outline.push((equal_count as u8, Cow::Borrowed(&rest[..line_end])));
+                    }
                     state = M::Text;
                 } //_ => {}
             }

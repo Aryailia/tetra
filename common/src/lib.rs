@@ -20,12 +20,15 @@ pub struct Metadata<'a> {
 
 //run: cargo test -- --nocapture
 
+// NOTE: I am trying to remove dependencies on syn, thus the perfect hash
+//       is created not from a proc_macro but from 'build.rs' which is then
+//       imported here
 // Defines 'pub enum FileType' and 'FROM_EXT'
 include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 
 impl FileType {
     pub const fn id(&self) -> usize {
-        // SAFETY: The representation of $enum is set
+        // SAFETY: The representation of $enum is set, see source in 'build.rs'
         unsafe { *(self as *const Self as *const usize) }
     }
 
@@ -39,7 +42,7 @@ impl FileType {
 pub trait Analyse {
     fn comment_prefix(&self) -> &'static str { todo!("Unknown line comment symbol.") }
     fn metadata<'a>(&self, _source: &'a str) -> Metadata<'a> {
-        todo!()
+        todo!() // Default panic if not overridden
     }
 
 }
