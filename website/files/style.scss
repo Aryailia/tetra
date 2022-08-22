@@ -31,12 +31,14 @@ footer { grid-area: footer; }
 /*******************************************************************************
  * Navbar all but color - because it is highly custom */
 
-// Having links underlined is best accessibilty for color blind
-// But for navbar, the text are links is obvious by custom (every page is like this)
 nav a { text-decoration: none; }
 header {
   width: 100%;
-  nav > span {
+  nav span {
+    // Having links underlined is best accessibilty for color blind
+    // But for navbar, the text are links is obvious by custom (every page is like this)
+    text-decoration: none;
+
     display: inline-block;
     padding: 0.5rem 40px;
     text-align: center;
@@ -59,11 +61,15 @@ body { color: #222222; }
 }
 header           { border-bottom: 1px solid grey; }
 
-
-header nav :hover { color: $link-hover-color; }
-body   { background: WhiteSmoke; }
+nav {
+  .current a { color: white; }
+  .current a:hover { color: $link-base-color; }
+  :hover { color: $link-hover-color; }
+  .current { background-color: $link-hover-color; }
+}
+body   { background: $primary-background-color; }
 header { background: White; }
-main   { background: WhiteSmoke; }
+main   { background: $primary-background-color; }
 .left  { background: WhiteSmoke; }
 .right { background: White; }
 footer { background: WhiteSmoke; }
@@ -141,7 +147,7 @@ pre {
   }
   .chosen {
     color:                orange;
-    background-color:     $primary-background-color;
+    background-color:     $primary-background-color; // Colour over .tab-body border
     border-left:          $tab-border-size solid black;
     border-top:           $tab-border-size solid black;
     border-right:         $tab-border-size solid black;
