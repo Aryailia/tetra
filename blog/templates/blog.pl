@@ -54,13 +54,13 @@ my %cmds;
     split_langs();
   }],
   "website" => ["Refer to $MAKE help", sub {
-    my_make('langify');
+    my_make('copy', 'langify');
     `\Q$MAKE\E website`;
   }],
   "all" => ["Clean and build everything", sub {
-    my_make("clean");
+    my_make('clean');
     `\Q$MAKE\E build`;
-    my_make("copy", "website");
+    my_make('website');
   }],
 );
 

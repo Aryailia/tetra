@@ -41,6 +41,7 @@ impl FileType {
 
 pub trait Analyse {
     fn comment_prefix(&self) -> &'static str { todo!("Unknown line comment symbol.") }
+    fn comment_suffix(&self) -> &'static str { todo!("Unknown line comment symbol.") }
     fn metadata<'a>(&self, _source: &'a str) -> Metadata<'a> {
         todo!() // Default panic if not overridden
     }
@@ -49,6 +50,7 @@ pub trait Analyse {
 
 impl Analyse for FileType {
     fn comment_prefix(&self) -> &'static str { VTABLE[self.id()].comment_prefix() }
+    fn comment_suffix(&self) -> &'static str { VTABLE[self.id()].comment_suffix() }
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         VTABLE[self.id()].metadata(source)
     }
@@ -66,6 +68,6 @@ mod tests {
     fn it_works() {
         assert_eq!("//", FileType::from("adoc").unwrap().comment_prefix());
         let file = std::fs::read_to_string("../readme-source.md").unwrap();
-        println!("{}", FileType::CommonMark.metadata(&file).to_json());
+        //println!("{}", FileType::CommonMark.metadata(&file).to_json());
     }
 }

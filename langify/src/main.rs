@@ -37,15 +37,13 @@ fn main() {
                 .map(|i| &args.filename[i + ".".len()..])
                 .unwrap_or("");
 
-            let comment_str = FileType::from(extension)
-                .unwrap_or(FileType::Default)
-                .comment_prefix();
+            let filetype = FileType::from(extension).unwrap_or(FileType::Default);
             let default_lang = args.default_lang.as_ref().map(String::as_str).unwrap_or("en");
 
             let mut input = String::new();
             log(path::Path::new("STDIN"), io::stdin().read_to_string(&mut input));
 
-            for (lang, string) in parse(&input, comment_str, " api_set_lang:") {
+            for (lang, string) in parse(&input, filetype, " api_set_lang:") {
                 let lang = if lang == "ALL" {
                     default_lang
                 } else {
@@ -73,7 +71,7 @@ fn main() {
     }
 }
 
-fn parse<'a>(original: &'a str, comment_str: &str, api_str: &str) -> HashMap<&'a str, String> {
+fn parse<'a>(original: &'a str, filetype: FileType, api_str: &str) -> HashMap<&'a str, String> {
     let mut choices = "ALL";
 
     let mut lang_split = Vec::new();
@@ -81,27 +79,33 @@ fn parse<'a>(original: &'a str, comment_str: &str, api_str: &str) -> HashMap<&'a
     let (mut prev, (mut ch, mut curr, _)) = ('\n', walker.current());
 
     let mut cursor = 0;
-    let offset = comment_str.len() + api_str.len();
+    let comment_prefix = filetype.comment_prefix();
+    let comment_suffix = filetype.comment_suffix();
+    let offset = comment_prefix.len() + api_str.len();
 
     loop {
         let from_curr = &original[curr..];
 
-        if prev == '\n'
-            && from_curr.starts_with(comment_str)
-            && from_curr[comment_str.len()..].starts_with(api_str)
-        {
-            lang_split.push((choices, &original[cursor..curr]));
+        if prev == '\n' {
+            if let Some(choice_str) = from_curr.lines()
+                .next()
+                .and_then(|s| s.strip_prefix(comment_prefix))
+                .and_then(|s| s.strip_prefix(api_str))
+                .and_then(|s| s.strip_suffix(comment_suffix))
+            {
+                lang_split.push((choices, &original[cursor..curr]));
 
-            walker.peek_until(|c, _| c == '\r' || c == '\n');
-            choices = &original[curr + offset..walker.post];
-            match walker.peek() {
-                Some('\r') => walker.increment_post_by("\r\n".len()),
-                Some('\n') => walker.increment_post_by("\n".len()),
-                None => {}
-                Some(_) => unreachable!(),
+                walker.peek_until(|c, _| c == '\r' || c == '\n');
+                choices = choice_str;
+                match walker.peek() {
+                    Some('\r') => walker.increment_post_by("\r\n".len()),
+                    Some('\n') => walker.increment_post_by("\n".len()),
+                    None => {}
+                    Some(_) => unreachable!(),
+                }
+                ch = '\n';
+                cursor = walker.post;
             }
-            ch = '\n';
-            cursor = walker.post;
         }
 
         if let Some(x) = walker.advance() {

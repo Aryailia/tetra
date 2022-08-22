@@ -17,6 +17,9 @@ impl Analyse for CommonMark {
     fn comment_prefix(&self) -> &'static str {
         "<!--"
     }
+    fn comment_suffix(&self) -> &'static str {
+        "-->"
+    }
 
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         let frontmatter = source.strip_prefix("---\n").and_then(|post_dashes| {
@@ -119,6 +122,7 @@ mod tests {
     #[test]
     fn works() {
         println!("{:?}", CommonMark().metadata(_FILE));
+        //println!("{:?}", CommonMark().metadata(include_str!("../../../blog/published/hello.md")));
         //println!("{:?}", AsciiDoctor().outline("# hello\n== HOw are you\n==A SEcond\n")) ;
     }
 

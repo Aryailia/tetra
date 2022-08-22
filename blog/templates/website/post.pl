@@ -45,16 +45,16 @@ sub parse {
   print PJ ",$json_str";
   close PJ;
 
-  return ($input_path, $lang, $lang_list, $json_str);
+  return ($parsed_path, $lang, $lang_list, $json_str);
 }
 
 sub main {
-  my ($input_path, $lang, $lang_list, $json_str) = parse @ARGV;
+  my ($path, $lang, $lang_list, $json_str) = parse @ARGV;
 
   my $json = decode_json($json_str);
   my %attributes = %{$json->{"attributes"}};
-  basename($input_path) =~ m|([^/])*\.([^\.]+)$|
-    or die "'$input_path' does not a filestem and/or extension";
+  basename($path) =~ m|([^/])*\.([^\.]+)$|
+    or die "'$path' does not a filestem and/or extension";
   my $stem = $1;
   my $ext = lc($2);
 
@@ -104,14 +104,17 @@ print(<<EOF);
     <h1>${title}</h1>
     <div>Last Updated: ${date_updated}</div>
 EOF
-if ($ext eq "adoc") {
-  system("asciidoctor", $input_path, "--out-file", "-",
+
+if ($ext eq "md") {
+  system("comrak", "--unsafe", "--front-matter-delimiter", "---", $path);
+
+} elsif ($ext eq "adoc") {
+  system("asciidoctor", $path, "--out-file", "-",
     "--no-header-footer",
     "--attribute", "source-highlighter=pygments",
     "--attribute", "webfonts!",
     "--attribute", "imagesdir=$ENV{'DOMAIN'}/images",
   );
-} elsif (1) {
 }
 
 print(<<EOF);
@@ -119,7 +122,7 @@ print(<<EOF);
     </div>
 @{[tab_bar_two_div(2, "")]}
         <pre><code>
-@{[`cat \Q$input_path\E`]}
+@{[`cat \Q$path\E`]}
         </code></pre>
       </div>
     </div>

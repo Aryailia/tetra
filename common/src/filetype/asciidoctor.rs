@@ -22,6 +22,9 @@ impl Analyse for AsciiDoctor {
     fn comment_prefix(&self) -> &'static str {
         "//"
     }
+    fn comment_suffix(&self) -> &'static str {
+        ""
+    }
     fn metadata<'a>(&self, source: &'a str) -> Metadata<'a> {
         enum M {
             Text,

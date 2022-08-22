@@ -46,14 +46,18 @@ $ENV{"NAVBAR"}
   <main class="tabs">
 @{[tab_bar_two_div(1, "checked")]}
 EOF
-if ($ext eq "adoc") {
+
+if ($ext eq "md") {
+  system("comrak", "--unsafe", "--front-matter-delimiter", "---", $path);
+
+} elsif ($ext eq "adoc") {
   system("asciidoctor", $input_path, "--out-file", "-",
     "--no-header-footer",
     "--attribute", "source-highlighter=pygments",
     "--attribute", "webfonts!",
     "--attribute", "imagesdir=$ENV{'DOMAIN'}/images",
   );
-} elsif (1) {
+
 }
 
 print(<<EOF);
