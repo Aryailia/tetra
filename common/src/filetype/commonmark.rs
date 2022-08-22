@@ -26,10 +26,10 @@ impl Analyse for CommonMark {
             } else {
                 source.strip_suffix("\n---")
             }
-        });
+        }).unwrap_or("");
 
         let mut attributes = HashMap::new();
-        for line in frontmatter.unwrap_or("").lines() {
+        for line in frontmatter.lines() {
             if let Some(colon_index) = line.find(':') {
                 let (key, val) = line.split_at(colon_index);
                 attributes.insert(key, val[":".len()..].trim());
@@ -47,7 +47,7 @@ impl Analyse for CommonMark {
         let mut build_header = (0, Cow::Borrowed(""));
         let mut outline = Vec::new();
         let mut links = Vec::new();
-        for event in Parser::new(source) {
+        for event in Parser::new(&source[frontmatter.len()..]) {
             let mut event_text = None;
             match event {
                 Event::Start(Tag::Heading(heading_level, _, _)) => {
